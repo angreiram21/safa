@@ -1,0 +1,15 @@
+# Build trees
+/build/
+/build-*/
+
+# Generated Doxygen output
+/docs/doxygen/
+/docs/doxygen-warnings.log
+
+# Proyect documentations
+/docs/*.pdf
+/docs/**/*.pdf
+
+# macOS metadata
+.DS_Store
+._*

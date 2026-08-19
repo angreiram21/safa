@@ -1,0 +1,137 @@
+/**
+ * @file statistical_analysis.h
+ * @brief Pure post-sample region, moment, and normalization operations.
+ */
+
+#ifndef HBT_FITS_STATISTICAL_ANALYSIS_H
+#define HBT_FITS_STATISTICAL_ANALYSIS_H
+
+#include "hbt/config/hbt_config.h"
+#include "hbt/fits/fit_results.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+namespace hbt {
+
+/**
+ * @brief Select the OSL/radial region from zero through the right-tail cut.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param binning Validated uniform binning for the logical histogram.
+ * @return Selected region, or std::nullopt when the histogram is empty.
+ * @throws std::out_of_range If the requested logical histogram is absent.
+ * @throws std::overflow_error If the selected uint64_t count sum overflows.
+ *
+ * Leading empty bins are retained. The first empty bin strictly to the right
+ * of the right edge of the first contiguous global-maximum plateau is excluded
+ * and fixes the tail cut. No later island is reincorporated.
+ */
+[[nodiscard]] std::optional<StatisticalRegion> select_shape_region(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning
+);
+
+/**
+ * @brief Select the signed delta-t region around its modal plateau.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param binning Validated signed delta-t binning.
+ * @return Selected region, or std::nullopt when the histogram is empty.
+ * @throws std::out_of_range If the requested logical histogram is absent.
+ * @throws std::overflow_error If the selected uint64_t count sum overflows.
+ *
+ * The first empty bin on each side of the modal plateau is excluded and ends
+ * that side of the selected region.
+ */
+[[nodiscard]] std::optional<StatisticalRegion> select_delta_t_region(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning
+);
+
+/**
+ * @brief Build the final normalized distribution for one selected region.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param binning Validated uniform histogram binning.
+ * @param region Selected contiguous statistical region.
+ * @return One normalized result per selected raw bin.
+ * @throws std::invalid_argument If selected_count is zero or inconsistent.
+ * @throws std::out_of_range If the requested region is outside raw storage.
+ * @throws std::overflow_error If re-summing selected counts overflows.
+ *
+ * This operation is for presentation state only and must be called after fits
+ * or delta-t statistics. It does not modify or retain the raw counts.
+ */
+[[nodiscard]] std::vector<NormalizedHistogramBin> normalize_region(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& region
+);
+
+/**
+ * @brief Compute signed delta-t moments from raw selected counts.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param binning Validated signed delta-t binning.
+ * @param region Selected peak-centered region.
+ * @return Delta-t result without its normalized presentation bins.
+ * @throws std::invalid_argument If region.selected_count is zero or differs
+ *         from the selected raw count sum.
+ * @throws std::out_of_range If the region lies outside raw storage.
+ * @throws std::overflow_error If re-summing selected counts overflows.
+ *
+ * The population variance is evaluated exactly from weighted bin centers. A
+ * negative or non-finite variance is reported and is never clamped to zero.
+ */
+[[nodiscard]] DeltaTHistogramResult calculate_delta_t_statistics(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& region
+);
+
+/**
+ * @brief Return the center of one validated uniform histogram bin.
+ * @param binning Validated uniform histogram binning.
+ * @param bin_index Zero-based bin index.
+ * @return Arithmetic bin center in the family's physical units.
+ * @throws std::out_of_range If @p bin_index is outside the binning.
+ */
+[[nodiscard]] double histogram_bin_center(
+    const HistogramBinningConfig& binning,
+    std::size_t bin_index
+);
+
+/**
+ * @brief Return the lower edge of one validated uniform histogram bin.
+ * @param binning Validated uniform histogram binning.
+ * @param bin_index Zero-based bin index.
+ * @return Exact lower bin edge in the family's physical units.
+ * @throws std::out_of_range If @p bin_index is outside the binning.
+ */
+[[nodiscard]] double histogram_bin_lower_edge(
+    const HistogramBinningConfig& binning,
+    std::size_t bin_index
+);
+
+/**
+ * @brief Return the upper edge of one validated uniform histogram bin.
+ * @param binning Validated uniform histogram binning.
+ * @param bin_index Zero-based bin index.
+ * @return Exact upper bin edge in the family's physical units.
+ * @throws std::out_of_range If @p bin_index is outside the binning.
+ */
+[[nodiscard]] double histogram_bin_upper_edge(
+    const HistogramBinningConfig& binning,
+    std::size_t bin_index
+);
+
+}  // namespace hbt
+
+#endif  // HBT_FITS_STATISTICAL_ANALYSIS_H

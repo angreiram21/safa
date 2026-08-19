@@ -1,0 +1,83 @@
+hbt_enabled_channels: >-
+  pi_plus_pi_plus+pi_minus_pi_minus,
+  p_p+p_bar_p_bar,
+  pi_plus_p+pi_minus_p_bar,
+  k_plus_p+k_minus_p_bar,
+  k_plus_k_plus+k_minus_k_minus
+
+hbt_particle_acceptance:
+  # Allowed values:
+  # - rapidity: apply the longitudinal cut to |y|
+  # - pseudorapidity: apply the longitudinal cut to |eta|
+  longitudinal_variable: "pseudorapidity"
+
+  groups:
+    pions:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.14
+      pt_max_gev: 4.0
+
+    kaons:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.4
+      pt_max_gev: 1.4
+
+    nucleons:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.5
+      pt_max_gev: 4.05
+
+    sigmas:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 1.0
+      pt_max_gev: 10000.0
+
+    lambdas:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.3
+      pt_max_gev: 10000.0
+
+# Pair-level slicing. Each enabled axis requires at least two consecutive
+# bin edges in GeV. Disabled axes may retain validated production binning.
+# Slices use half-open intervals [edge_i, edge_(i+1)).
+hbt_pair_slicing:
+  kt:
+    enabled: false
+
+  mt:
+    enabled: false
+    bin_edges_gev:
+      - 0.50
+      - 0.75
+      - 1.00
+      - 1.25
+      - 1.50
+      - 1.75
+      - 2.00
+      - 2.25
+
+# Raw source histograms. These bins are independent of kT/mT slicing.
+# OSL components and radial source radii are histogrammed from zero.
+# Relative times retain their sign and therefore span zero.
+hbt_histograms:
+  osl:
+    nbins: 3000
+    min_fm: 0.0
+    max_fm: 300.0
+
+  radial:
+    nbins: 3000
+    min_fm: 0.0
+    max_fm: 300.0
+
+  delta_t:
+    nbins: 6000
+    min_fm_c: -300.0
+    max_fm_c: 300.0
+
+# Allowed values:
+# - primordial
+# - primordial_rescattering
+# - primordial_rescattering_decay
+# - all: request all three nested origin selections in the same run
+hbt_origin_mode: "all"
