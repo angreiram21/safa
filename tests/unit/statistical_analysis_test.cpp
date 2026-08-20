@@ -71,6 +71,126 @@ bool verify_shape_region_without_tail_cut() {
     return true;
 }
 
+
+/**
+ * @brief Verify radial Gaussian-core selection uses only the right branch.
+ * @return true when PAVA removes a recrossing and the threshold bin is excluded.
+ */
+bool verify_radial_gaussian_core_region() {
+    const hbt::HistogramBinningConfig binning{10U, 0.0, 10.0, 1.0};
+    const std::vector<std::uint64_t> bins{
+        1U, 3U, 10U, 10U, 8U, 6U, 4U, 1U, 2U, 0U
+    };
+    const std::optional<hbt::StatisticalRegion> full =
+        hbt::select_shape_region(bins, 0U, binning);
+    if (!full.has_value() || full->last_bin != 8U) {
+        return fail("radial core fixture lost its full statistical region");
+    }
+    const std::optional<hbt::StatisticalRegion> core =
+        hbt::select_gaussian_core_region(
+            hbt::FitObservableFamily::Radial,
+            bins,
+            0U,
+            binning,
+            full.value(),
+            0.20
+        );
+    // PAVA pools [1,2] at bins 7,8 to 1.5. The 20% threshold is 2.0,
+    // therefore bin 7 is the first excluded bin and the fit ends at bin 6.
+    if (!core.has_value() || core->first_bin != 0U ||
+        core->last_bin != 6U || core->selected_count != 42U) {
+        return fail("radial Gaussian-core PAVA/threshold selection is wrong");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify OSL core selection starts at x=0 rather than an interior mode.
+ * @return true when the monotonic reference is the PAVA level at bin zero.
+ */
+bool verify_osl_gaussian_core_region() {
+    const hbt::HistogramBinningConfig binning{8U, 0.0, 8.0, 1.0};
+    const std::vector<std::uint64_t> bins{9U, 10U, 8U, 6U, 3U, 1U, 2U, 0U};
+    const std::optional<hbt::StatisticalRegion> full =
+        hbt::select_shape_region(bins, 0U, binning);
+    if (!full.has_value() || full->last_bin != 6U) {
+        return fail("OSL core fixture lost its full statistical region");
+    }
+    const std::optional<hbt::StatisticalRegion> core =
+        hbt::select_gaussian_core_region(
+            hbt::FitObservableFamily::OSL,
+            bins,
+            0U,
+            binning,
+            full.value(),
+            0.20
+        );
+    // PAVA pools the first two bins to 9.5 and the 1,2 recrossing to 1.5.
+    // 20% of 9.5 is 1.9, so bin 5 is excluded and bin 4 is the last fit bin.
+    if (!core.has_value() || core->first_bin != 0U ||
+        core->last_bin != 4U || core->selected_count != 36U) {
+        return fail("OSL Gaussian-core selection did not start from x=0");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify the core selector falls back to the full safety region.
+ * @return true when no threshold crossing invents an earlier cut.
+ */
+bool verify_gaussian_core_fallback() {
+    const hbt::HistogramBinningConfig binning{5U, 0.0, 5.0, 1.0};
+    const std::vector<std::uint64_t> bins{10U, 9U, 8U, 7U, 6U};
+    const hbt::StatisticalRegion full{0U, 4U, 40U};
+    const auto core = hbt::select_gaussian_core_region(
+        hbt::FitObservableFamily::OSL,
+        bins,
+        0U,
+        binning,
+        full,
+        0.10
+    );
+    if (!core.has_value() || core->last_bin != 4U ||
+        core->selected_count != 40U) {
+        return fail("Gaussian-core selector failed its full-region fallback");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify numerical basin equivalence and 4-of-5 consensus grouping.
+ * @return true when a lower-Q alternative basin cannot replace a 4-start group.
+ *
+ * Q is intentionally absent from this pure grouping test: basin identity is
+ * determined only by repeated convergence in the three mixed coordinates.
+ */
+bool verify_mixed_basin_consensus_grouping() {
+    const std::vector<hbt::MixedBasinPoint> endpoints{
+        {0.700, 2.000, 0.700},
+        {0.704, 2.006, 0.696},
+        {0.695, 1.995, 0.705},
+        {0.702, 2.003, 0.701},
+        {2.200, 0.500, 0.080}
+    };
+    if (!hbt::same_mixed_basin(endpoints[0U], endpoints[1U]) ||
+        hbt::same_mixed_basin(endpoints[0U], endpoints[4U])) {
+        return fail("mixed basin numerical equivalence tolerance is wrong");
+    }
+
+    const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U, 4U};
+    const std::vector<std::size_t> consensus =
+        hbt::largest_mixed_basin_group(endpoints, valid_indices);
+    if (consensus.size() != 4U) {
+        return fail("mixed basin grouping did not preserve 4-of-5 consensus");
+    }
+    for (const std::size_t index : consensus) {
+        if (index >= 4U) {
+            return fail("isolated alternative basin entered core consensus");
+        }
+    }
+    return true;
+}
+
 /**
  * @brief Verify empty shape and delta-t histograms have no selected region.
  * @return true when an all-zero histogram remains explicitly regionless.
@@ -207,6 +327,10 @@ bool verify_insufficient_delta_t_count() {
  */
 int main() {
     if (!verify_shape_region() || !verify_shape_region_without_tail_cut() ||
+        !verify_radial_gaussian_core_region() ||
+        !verify_osl_gaussian_core_region() ||
+        !verify_gaussian_core_fallback() ||
+        !verify_mixed_basin_consensus_grouping() ||
         !verify_empty_regions() || !verify_delta_t_region() ||
         !verify_normalization() || !verify_delta_t_statistics() ||
         !verify_invalid_delta_t_variance() ||

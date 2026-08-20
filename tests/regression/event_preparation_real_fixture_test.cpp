@@ -123,6 +123,93 @@ bool contains_species(
 }
 
 /**
+ * @brief Verify that production slice-count entries match resolved slicing.
+ *
+ * The expected layout is derived entirely from the validated user-provided
+ * bin edges. No slice width, slice count, or enabled axis is hard-coded here.
+ *
+ * @param slicing Resolved kT/mT slicing configuration.
+ * @param summary Pair-slice counts produced by the analysis.
+ * @return `true` when the stored slice layout matches the configured axes.
+ */
+bool verify_pair_slice_layout(
+    const hbt::PairSlicingConfig& slicing,
+    const hbt::PairSliceCountSummary& summary
+) {
+    if (summary.pair_slicing.kt.enabled != slicing.kt.enabled ||
+        summary.pair_slicing.mt.enabled != slicing.mt.enabled ||
+        summary.pair_slicing.kt.bin_edges_gev != slicing.kt.bin_edges_gev ||
+        summary.pair_slicing.mt.bin_edges_gev != slicing.mt.bin_edges_gev) {
+        std::cerr
+            << "event_preparation_real_fixture_test: pair-slice summary "
+            << "does not preserve the resolved slicing configuration.\n";
+        return false;
+    }
+
+    const std::size_t kt_count =
+        slicing.kt.enabled ? slicing.kt.bin_edges_gev.size() - 1U : 0U;
+    const std::size_t mt_count =
+        slicing.mt.enabled ? slicing.mt.bin_edges_gev.size() - 1U : 0U;
+
+    std::size_t expected_entries = 0U;
+    if (slicing.kt.enabled && slicing.mt.enabled) {
+        expected_entries = kt_count * mt_count;
+    } else if (slicing.kt.enabled) {
+        expected_entries = kt_count;
+    } else if (slicing.mt.enabled) {
+        expected_entries = mt_count;
+    }
+
+    if (summary.entries.size() != expected_entries) {
+        std::cerr
+            << "event_preparation_real_fixture_test: expected "
+            << expected_entries
+            << " production slice entries from the resolved configuration, "
+            << "found "
+            << summary.entries.size()
+            << ".\n";
+        return false;
+    }
+
+    for (std::size_t entry_index = 0U;
+         entry_index < summary.entries.size();
+         ++entry_index) {
+        const hbt::PairSliceCountEntry& entry = summary.entries[entry_index];
+
+        if (slicing.kt.enabled && slicing.mt.enabled) {
+            const std::size_t expected_kt = entry_index / mt_count;
+            const std::size_t expected_mt = entry_index % mt_count;
+            if (entry.kt_slice_index != expected_kt ||
+                entry.mt_slice_index != expected_mt) {
+                std::cerr
+                    << "event_preparation_real_fixture_test: Cartesian "
+                    << "slice entry order differs from configured kT-major "
+                    << "layout.\n";
+                return false;
+            }
+        } else if (slicing.kt.enabled) {
+            if (entry.kt_slice_index != entry_index ||
+                entry.mt_slice_index.has_value()) {
+                std::cerr
+                    << "event_preparation_real_fixture_test: kT-only slice "
+                    << "entry layout is inconsistent.\n";
+                return false;
+            }
+        } else if (slicing.mt.enabled) {
+            if (entry.kt_slice_index.has_value() ||
+                entry.mt_slice_index != entry_index) {
+                std::cerr
+                    << "event_preparation_real_fixture_test: mT-only slice "
+                    << "entry layout is inconsistent.\n";
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+/**
  * @brief Verify the frozen scientific and run configuration for the fixture.
  * @param result Completed application run containing resolved startup state.
  * @return `true` when the resolved configuration matches the regression setup.
@@ -640,11 +727,16 @@ bool verify_pair_processing_summary(const app::AnalysisRunSummary& result) {
             << "mode is not All.\n";
         success = false;
     }
-    if (!summary.total_pair_slice_counts.entries.empty()) {
+    if (!result.startup.hbt_config.has_value()) {
         std::cerr
-            << "event_preparation_real_fixture_test: disabled slicing "
-            << "created production slice entries.\n";
+            << "event_preparation_real_fixture_test: missing resolved HBT "
+            << "configuration while validating pair slices.\n";
         success = false;
+    } else {
+        success = verify_pair_slice_layout(
+            result.startup.hbt_config->pair_slicing,
+            summary.total_pair_slice_counts
+        ) && success;
     }
     success = expect_count(
         "pair_processing.routed_P.channels.size",

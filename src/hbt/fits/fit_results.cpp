@@ -10,6 +10,62 @@
 
 namespace hbt {
 
+bool same_mixed_basin(
+    const MixedBasinPoint& lhs,
+    const MixedBasinPoint& rhs
+) {
+    return std::fabs(lhs.log_core_radius - rhs.log_core_radius) <=
+            kMixedBasinLogRadiusTolerance &&
+        std::fabs(lhs.log_tail_radius - rhs.log_tail_radius) <=
+            kMixedBasinLogRadiusTolerance &&
+        std::fabs(lhs.core_fraction - rhs.core_fraction) <=
+            kMixedBasinCoreFractionTolerance;
+}
+
+std::vector<std::size_t> largest_mixed_basin_group(
+    const std::vector<MixedBasinPoint>& endpoints,
+    const std::vector<std::size_t>& valid_indices
+) {
+    std::vector<bool> visited(endpoints.size(), false);
+    std::vector<std::size_t> best;
+    for (const std::size_t seed : valid_indices) {
+        if (seed >= endpoints.size()) {
+            throw std::out_of_range(
+                "mixed basin grouping: valid start index is out of range"
+            );
+        }
+        if (visited[seed]) {
+            continue;
+        }
+        std::vector<std::size_t> component;
+        std::vector<std::size_t> stack{seed};
+        visited[seed] = true;
+        while (!stack.empty()) {
+            const std::size_t current = stack.back();
+            stack.pop_back();
+            component.push_back(current);
+            for (const std::size_t candidate : valid_indices) {
+                if (candidate >= endpoints.size()) {
+                    throw std::out_of_range(
+                        "mixed basin grouping: valid start index is out of range"
+                    );
+                }
+                if (!visited[candidate] && same_mixed_basin(
+                        endpoints[current],
+                        endpoints[candidate]
+                    )) {
+                    visited[candidate] = true;
+                    stack.push_back(candidate);
+                }
+            }
+        }
+        if (component.size() > best.size()) {
+            best = std::move(component);
+        }
+    }
+    return best;
+}
+
 FitFailureReason fit_failure_from_migrad(
     const MigradDiagnostic& diagnostic
 ) {
@@ -24,6 +80,9 @@ FitFailureReason fit_failure_from_migrad(
     }
     if (!diagnostic.q_min.has_value()) {
         return FitFailureReason::NonFiniteMinimum;
+    }
+    if (!diagnostic.valid_covariance) {
+        return FitFailureReason::MigradInvalid;
     }
     if (!diagnostic.valid) {
         return FitFailureReason::MigradInvalid;
@@ -77,12 +136,20 @@ const char* fit_failure_reason_token(FitFailureReason reason) {
     switch (reason) {
         case FitFailureReason::None:
             return "none";
+        case FitFailureReason::NotApplicable:
+            return "not_applicable";
         case FitFailureReason::EmptyHistogram:
             return "empty_histogram";
         case FitFailureReason::InsufficientBins:
             return "insufficient_bins";
+        case FitFailureReason::InsufficientStatistics:
+            return "insufficient_statistics";
         case FitFailureReason::InvalidMomentSeed:
             return "invalid_moment_seed";
+        case FitFailureReason::InvalidGaussianCoreAnchor:
+            return "invalid_gaussian_core_anchor";
+        case FitFailureReason::NoBasinConsensus:
+            return "no_basin_consensus";
         case FitFailureReason::ObjectiveEvaluation:
             return "objective_evaluation_failure";
         case FitFailureReason::MigradInvalid:

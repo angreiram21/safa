@@ -449,8 +449,8 @@ mt:
   enabled: true
   bin_edges_gev:
     - 0.50
-    - 0.75
-    - 1.00
+    - 0.70
+    - 0.90
 ```
 
 Rules:
@@ -885,30 +885,55 @@ OSL exponential:    exp(-x / R_tail)
 radial exponential: r^2 exp(-r / R_tail)
 ```
 
-Each component is independently normalized to unit probability over the selected
-region. The mixed probability is `f_core * Gaussian + (1 - f_core) * tail`.
-There is no free amplitude. The likelihood uses raw selected counts and a binned
-Poisson deviance with `mu_i = N_selected * p_i`; observed zero-count bins remain
-in the objective. The probability vector must sum to one within an allowance
-derived only from `double` roundoff and the selected-bin count. There is no
-scientific epsilon, renormalization or empty-bin removal.
+The full statistical region keeps the historical contiguous-region semantics and
+is used for presentation normalization and for the mixed model. The pure
+Gaussian has a separate compact core region. A non-increasing PAVA estimate is
+used only to choose the upper Gaussian edge; raw counts are never smoothed in
+the likelihood. Radial core selection starts at the right edge of the modal
+plateau and excludes the first PAVA bin at or below 10% of the raw modal
+maximum. OSL core selection starts at `x = 0` and excludes the first PAVA bin at
+or below 10% of the PAVA level at the origin. In both geometries the existing
+first-empty-bin boundary is the safety limit and the available full-region edge
+is the fallback when the 10% level is not reached.
+
+Each component is independently normalized to unit probability over the region
+used by that fit. The mixed probability is
+`f_core * Gaussian + (1 - f_core) * tail`. There is no free amplitude. The
+likelihood uses raw selected counts and a binned Poisson deviance with
+`mu_i = N_selected * p_i`; observed zero-count bins remain in the objective. The
+probability vector must sum to one within an allowance derived only from
+`double` roundoff and the selected-bin count. There is no scientific epsilon,
+post-hoc renormalization or empty-bin removal.
 
 ### ROOT/Minuit2 fitting
 
 The pure Gaussian fit has one physical parameter, `R > 0`, represented through
-a log-radius parameter. It runs MIGRAD followed by MINOS and reports physical
-`R` with asymmetric MINOS errors. No HESSE or Simplex substitute is used.
+a log-radius parameter. It runs MIGRAD followed by MINOS on the compact core
+region and reports `R_G^core` with asymmetric physical MINOS errors. The mixed
+model remains fitted over the full statistical region.
 
-The mixed model fits `R_core > 0`, `R_tail > 0` and `f_core` in `[0,1]`. There
-is no imposed `R_tail >= R_core` ordering; `R_tail < R_core` is diagnostic state
-only. The fitter uses one deterministic moment-based start and, when the
-Gaussian fit is valid, a second deterministic start using that fitted Gaussian
-radius plus the data-derived tail seed. Independent MIGRAD runs are compared and
-the lowest valid deviance is selected before MINOS is run on that minimum.
+The mixed model fits `R_core > 0`, `R_tail > 0` and `f_core` in `[0,1]`. No
+ordering between `R_core` and `R_tail` is imposed or used as a validity
+criterion. Five deterministic starts share
+`R_core(0) = R_G^core` from the matching Gaussian fit and use the
+moment-derived tail scale with `(R_tail scale, f_core)` seeds
+`(1,0.50)`, `(0.5,0.50)`, `(2,0.50)`, `(1,0.25)`, and `(1,0.75)`.
 
-Invalid MIGRAD/MINOS states, degenerate core fractions, invalid objectives and
-insufficient regions are preserved as explicit status/failure information. An
-invalid fit does not fabricate parameter estimates or fit curves.
+Converged starts are assigned to numerical basins in
+`(log(R_core), log(R_tail), f_core)` using documented convergence tolerances. A
+mixed result is publishable only when at least four of the five starts belong to
+the same basin. The smallest deviance is used only to choose the numerical
+realization inside that consensus basin; it is never used to select between
+distinct basins. MINOS runs only on the selected consensus realization.
+
+One-dimensional radial mT slices use a provisional production quality cut of
+`N_selected >= 10000`. Below that count both Gaussian and mixed fits are marked
+`insufficient_statistics`. The empirical cut is not imposed on global fits, OSL
+fits, kT-only slices, or Cartesian kT x mT cells.
+Invalid MIGRAD/MINOS or covariance states, degenerate core fractions, missing
+Gaussian anchors, absent basin consensus, invalid objectives and insufficient
+regions are preserved as explicit status/failure information. An invalid fit
+does not fabricate parameter estimates or fit curves.
 
 ### Signed delta-t statistics
 
@@ -1190,7 +1215,7 @@ product, preserving configured channel order.
 Scientific result files use this hierarchy:
 
 ```text
-<output_path>/product_<index>/<global|slice_<index>>/<P|PR|PRD>/
+<output_path>/product_<index>/global/<P|PR|PRD>/
   LAB/dt/delta_t/
   LCMS/osl/r_out/
   LCMS/osl/r_side/
@@ -1200,14 +1225,32 @@ Scientific result files use this hierarchy:
   PRF/osl/r_out/
   PRF/radial/r_radial/
   PRF/dt/delta_t/
+
+<output_path>/product_<index>/<configured-slice-token>/<P|PR|PRD>/
+  LCMS/radial/r_radial/
+  LCMS/dt/delta_t/
+  PRF/radial/r_radial/
+  PRF/dt/delta_t/
 ```
+
+Slice directory names are derived from the actual validated user-configured
+kinetic edges, never from a hard-coded width. With mT edges `0.50, 0.70, 0.90`,
+for example, the directories are `mT_slice0_0.5-0.7` and
+`mT_slice1_0.7-0.9`. kT uses the analogous `kT_slice...` token. If both axes are
+enabled, their tokens are joined with `__` in the same kT-major flat ordering
+used by pair routing. OSL result directories are global-only; kinetic slices are
+used for the radial `R_core` dependence (and the existing signed delta-t slice
+outputs).
 
 Shape directories always contain `fit_parameters.csv`; `distribution.csv` is
 written when a statistical region exists. Distribution columns contain the
 normalized `pdf` and `d_pdf`, plus Gaussian and/or mixed fitted PDF columns only
-when the corresponding fit is fully valid. The parameter table records Gaussian
-`R`, mixed `R_core`, `R_tail` and `f_core`, asymmetric MINOS errors, `Q_min` and
-stable MIGRAD/MINOS/failure diagnostics. Delta-t directories contain
+when the corresponding fit is fully valid. Gaussian fitted values are written
+only inside the compact Gaussian-core region, while mixed fitted values span the
+full statistical region. The parameter table records the exact region used by
+each model, Gaussian `R_G_core`, mixed `R_core`, `R_tail` and `f_core`, asymmetric MINOS
+errors, `Q_min`, covariance state, all five core-start diagnostics and basin
+consensus metadata. Delta-t directories contain
 `statistics.csv` with status, `N_selected`, mean, sigma and sigma error and,
 when a region exists, `distribution.csv`.
 
@@ -1324,8 +1367,9 @@ The standard CTest suite contains 51 tests covering:
 - exact-edge Gaussian/exponential OSL and radial model integrals;
 - unit-normalized model probabilities and binned Poisson deviance, including
   zero-count bins and explicit probability-normalization validation;
-- deterministic Gaussian/mixed Minuit2 fitting, MIGRAD/MINOS diagnostics,
-  multistart selection, asymmetric physical errors and invalid-fit reporting;
+- compact-core Gaussian fitting, five-start Gaussian-anchored mixed Minuit2
+  fitting, basin-consensus selection, MIGRAD/covariance/MINOS diagnostics,
+  asymmetric physical errors and explicit invalid-fit reporting;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`
   traceability metadata, fit/statistics CSVs and omission of invalid fit curves;

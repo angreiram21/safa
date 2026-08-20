@@ -104,9 +104,8 @@ bool verify_gaussian_migrad_and_minos() {
 }
 
 /**
- * @brief Verify deterministic mixed starts and selected-minimum MINOS.
- * @return true when start B reuses a valid Gaussian and the best valid
- *         objective is selected before MINOS.
+ * @brief Verify Gaussian-core-anchored mixed consensus and selected MINOS.
+ * @return true when five deterministic core starts reach a publishable basin.
  */
 bool verify_mixed_multistart_and_minos() {
     const hbt::HistogramBinningConfig binning{20U, 0.0, 10.0, 2.0};
@@ -134,7 +133,7 @@ bool verify_mixed_multistart_and_minos() {
         region
     );
     if (!gaussian.fully_valid) {
-        return fail("mixed synthetic sample did not provide valid start B");
+        return fail("mixed synthetic sample did not provide a valid Gaussian anchor");
     }
 
     const hbt::MixedFitResult mixed = hbt::fit_mixed_model(
@@ -145,18 +144,14 @@ bool verify_mixed_multistart_and_minos() {
         region,
         gaussian
     );
-    if (mixed.starts_attempted != 2U ||
-        !mixed.selected_start.has_value()) {
-        return fail("mixed deterministic two-start contract was not used");
+    if (mixed.starts_attempted != hbt::MixedFitResult::kCoreStartCount ||
+        mixed.valid_starts < 4U || mixed.consensus_size < 4U ||
+        !mixed.selected_core_start.has_value()) {
+        return fail("mixed five-start core-basin consensus was not established");
     }
-    if (mixed.starts[0U].valid && mixed.starts[1U].valid &&
-        mixed.starts[0U].q_min.has_value() &&
-        mixed.starts[1U].q_min.has_value()) {
-        const std::size_t selected = mixed.selected_start.value();
-        const std::size_t other = selected == 0U ? 1U : 0U;
-        if (mixed.starts[selected].q_min.value() >
-            mixed.starts[other].q_min.value()) {
-            return fail("mixed fit did not select the lowest valid Q minimum");
+    for (const hbt::MigradDiagnostic& start : mixed.starts) {
+        if (!start.attempted) {
+            return fail("mixed contract did not attempt all five core starts");
         }
     }
     if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
@@ -177,11 +172,6 @@ bool verify_mixed_multistart_and_minos() {
         mixed.core_fraction->value >= 1.0) {
         return fail("mixed fit published a degenerate core fraction");
     }
-    const bool tail_below =
-        mixed.tail_radius->value < mixed.core_radius->value;
-    if (mixed.tail_below_core != tail_below) {
-        return fail("tail/core ordering was not retained as a diagnostic");
-    }
     return true;
 }
 
@@ -192,6 +182,7 @@ bool verify_mixed_multistart_and_minos() {
  */
 bool verify_migrad_failure_classification() {
     const hbt::MigradDiagnostic valid{
+        true,
         true,
         true,
         false,
@@ -231,6 +222,12 @@ bool verify_migrad_failure_classification() {
     if (hbt::fit_failure_from_migrad(diagnostic) !=
         hbt::FitFailureReason::NonFiniteMinimum) {
         return fail("non-finite MIGRAD minimum was not classified explicitly");
+    }
+    diagnostic = valid;
+    diagnostic.valid_covariance = false;
+    if (hbt::fit_failure_from_migrad(diagnostic) !=
+        hbt::FitFailureReason::MigradInvalid) {
+        return fail("invalid MIGRAD covariance was not rejected");
     }
     diagnostic = valid;
     diagnostic.valid = false;

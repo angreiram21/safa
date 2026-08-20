@@ -36,6 +36,39 @@ namespace hbt {
 );
 
 /**
+ * @brief Select the compact Gaussian-core fit region inside a shape region.
+ * @param family OSL or radial physical model family.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param binning Validated uniform binning for the logical histogram.
+ * @param full_region Existing full statistical region retained by the mixed fit.
+ * @param threshold_fraction Positive fraction of the monotonic core reference
+ *        level at which the first excluded bin is identified. Production uses
+ *        0.10; 0.05 is retained for systematic studies.
+ * @return Core region starting at bin zero, or std::nullopt when a core cannot
+ *         be defined from the supplied counts.
+ * @throws std::invalid_argument If @p threshold_fraction is outside (0,1).
+ * @throws std::out_of_range If the logical histogram or region is unavailable.
+ * @throws std::overflow_error If the selected uint64_t count sum overflows.
+ *
+ * The selector never changes fit counts. It applies a non-increasing PAVA
+ * estimate only to decide the upper edge of the Gaussian fit. For radial
+ * histograms the estimate starts at the right edge of the first contiguous
+ * global-maximum plateau. For OSL histograms it starts at bin zero because the
+ * absolute-coordinate Gaussian has its physical maximum at x=0. The first
+ * threshold-crossing bin is excluded. The full region remains unchanged and
+ * is still used by the mixed model.
+ */
+[[nodiscard]] std::optional<StatisticalRegion> select_gaussian_core_region(
+    FitObservableFamily family,
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& full_region,
+    double threshold_fraction = 0.10
+);
+
+/**
  * @brief Select the signed delta-t region around its modal plateau.
  * @param bins Slot-major raw histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.

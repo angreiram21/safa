@@ -185,6 +185,31 @@ def read_float_column(
     return values
 
 
+def read_optional_float_column(
+    rows: Sequence[Dict[str, str]],
+    column: str,
+) -> Optional[List[Optional[float]]]:
+    """Read a fit column that may be intentionally blank outside its fit range."""
+    if not rows or column not in rows[0]:
+        return None
+
+    values: List[Optional[float]] = []
+    any_value = False
+    for row in rows:
+        text = row.get(column, "")
+        if text == "":
+            values.append(None)
+            continue
+        try:
+            values.append(float(text))
+            any_value = True
+        except ValueError as exc:
+            raise PlotInputError(
+                f"invalid value in column {column!r}"
+            ) from exc
+    return values if any_value else None
+
+
 def require_float_column(
     rows: Sequence[Dict[str, str]],
     column: str,
@@ -252,8 +277,8 @@ def y_axis_label(kind: str, observable: str) -> str:
 def add_channel_and_fit_legend(
     ax: plt.Axes,
     channel_label: str,
-    gaussian: Optional[Sequence[float]],
-    mixed: Optional[Sequence[float]],
+    gaussian: Optional[Sequence[Optional[float]]],
+    mixed: Optional[Sequence[Optional[float]]],
 ) -> None:
     handles = [
         Patch(
@@ -270,7 +295,7 @@ def add_channel_and_fit_legend(
                 [0],
                 color=GAUSSIAN_COLOR,
                 linewidth=FIT_LINEWIDTH,
-                label="Gaussian fit",
+                label="Gaussian core fit",
             )
         )
     if mixed is not None:
@@ -323,8 +348,8 @@ def plot_distribution(
     centers = require_float_column(rows, "center", distribution_path)
     pdf = require_float_column(rows, "pdf", distribution_path)
     d_pdf = require_float_column(rows, "d_pdf", distribution_path)
-    gaussian = read_float_column(rows, "gaussian_fit_pdf")
-    mixed = read_float_column(rows, "mixed_fit_pdf")
+    gaussian = read_optional_float_column(rows, "gaussian_fit_pdf")
+    mixed = read_optional_float_column(rows, "mixed_fit_pdf")
 
     edges = [lower[0], *upper]
     band_lower = [value - error for value, error in zip(pdf, d_pdf)]
@@ -365,17 +390,23 @@ def plot_distribution(
         zorder=3,
     )
     if gaussian is not None:
+        gaussian_x = [
+            x for x, value in zip(centers, gaussian) if value is not None
+        ]
+        gaussian_y = [value for value in gaussian if value is not None]
         ax.plot(
-            centers,
-            gaussian,
+            gaussian_x,
+            gaussian_y,
             color=GAUSSIAN_COLOR,
             linewidth=FIT_LINEWIDTH,
             zorder=4,
         )
     if mixed is not None:
+        mixed_x = [x for x, value in zip(centers, mixed) if value is not None]
+        mixed_y = [value for value in mixed if value is not None]
         ax.plot(
-            centers,
-            mixed,
+            mixed_x,
+            mixed_y,
             color=MIXED_COLOR,
             linewidth=FIT_LINEWIDTH,
             zorder=5,

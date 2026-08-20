@@ -28,9 +28,13 @@ namespace output {
  * empty so stale files from an earlier run can never masquerade as current
  * output. Scientific calculations are not performed here: selected regions,
  * normalized bins, fitted densities, parameters, and statistics are consumed
- * exactly as already present in the derived state. One root-level
- * `product_catalog.csv` records configured product expressions together with
- * their resolved canonical channels and species for run traceability.
+ * exactly as already present in the derived state. Slice directory names are
+ * derived from the validated configured kT/mT edges (for example
+ * `mT_slice0_0.5-0.7`) rather than from a hard-coded width. OSL results are
+ * serialized only for global destinations; kinetic-slice shape output is
+ * radial. One root-level `product_catalog.csv` records configured product
+ * expressions together with their resolved canonical channels and species for
+ * run traceability.
  */
 void write_hbt_production_output(
     const app::AnalysisRunSummary& result,

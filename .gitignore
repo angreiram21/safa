@@ -13,3 +13,5 @@
 # macOS metadata
 .DS_Store
 ._*
+
+scripts/plot_paper_figures.py

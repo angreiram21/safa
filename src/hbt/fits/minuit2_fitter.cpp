@@ -15,6 +15,7 @@
 #include <Minuit2/MnMinos.h>
 #include <Minuit2/MnUserParameters.h>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -44,7 +45,7 @@ struct RadiusSeeds {
  * @return Zeroed stable diagnostic state.
  */
 MigradDiagnostic unattempted_migrad() {
-    return {false, false, false, false, false, 0, std::nullopt};
+    return {false, false, false, false, false, false, 0, std::nullopt};
 }
 
 /**
@@ -79,14 +80,17 @@ GaussianFitResult invalid_gaussian(FitFailureReason reason) {
  */
 MixedFitResult invalid_mixed(FitFailureReason reason) {
     const MigradDiagnostic empty = unattempted_migrad();
+    const std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{
+        empty, empty, empty, empty, empty
+    };
     return {
         false,
         reason,
-        {empty, empty},
+        starts,
+        0U,
+        0U,
         0U,
         std::nullopt,
-        false,
-        false,
         empty,
         unattempted_minos(),
         unattempted_minos(),
@@ -323,6 +327,7 @@ MigradDiagnostic migrad_diagnostic(
     return {
         true,
         minimum.IsValid(),
+        minimum.UserState().HasCovariance(),
         minimum.HasReachedCallLimit(),
         minimum.IsAboveMaxEdm(),
         objective_failure,
@@ -445,24 +450,27 @@ FitParameterEstimate direct_parameter_estimate(
 }
 
 /**
- * @brief Execute one independent mixed-model MIGRAD start.
+ * @brief Execute one independent Gaussian-core-anchored mixed MIGRAD start.
  * @param objective Borrowed synchronous Minuit objective.
  * @param core_seed Strictly positive Gaussian core radius seed.
  * @param tail_seed Strictly positive exponential tail radius seed.
+ * @param core_fraction_seed Initial Gaussian mixture fraction in (0,1).
  * @return FunctionMinimum plus its stable diagnostic.
  *
- * The numerical parameter steps are Minuit controls rather than scientific
- * configuration. Standard strategy, call budget, and tolerance are retained.
+ * Every production mixed start shares the Gaussian-core seed and varies only
+ * the tail scale and core fraction. Numerical parameter steps are Minuit
+ * controls, not scientific configuration.
  */
 std::pair<FunctionMinimum, MigradDiagnostic> run_mixed_migrad(
     MixedObjective& objective,
     double core_seed,
-    double tail_seed
+    double tail_seed,
+    double core_fraction_seed
 ) {
     MnUserParameters parameters;
     parameters.Add("log_r_core", std::log(core_seed), 0.1);
     parameters.Add("log_r_tail", std::log(tail_seed), 0.1);
-    parameters.Add("f_core", 0.5, 0.05, 0.0, 1.0);
+    parameters.Add("f_core", core_fraction_seed, 0.05, 0.0, 1.0);
     MnMigrad migrad(objective, parameters);
     FunctionMinimum minimum = migrad();
     const bool objective_failure =
@@ -472,6 +480,16 @@ std::pair<FunctionMinimum, MigradDiagnostic> run_mixed_migrad(
         migrad_diagnostic(minimum, objective_failure)
     };
 }
+
+/**
+ * @brief One completed deterministic mixed start retained until selection.
+ */
+struct MixedStartOutcome {
+    FunctionMinimum minimum;      ///< Complete Minuit minimum for later MINOS.
+    MigradDiagnostic diagnostic;  ///< Stable serialized start diagnostic.
+    MixedBasinPoint endpoint;     ///< External endpoint for basin grouping.
+};
+
 
 }  // namespace
 
@@ -580,6 +598,11 @@ MixedFitResult fit_mixed_model(
     if (selected_bins < 4U || region.selected_count == 0U) {
         return invalid_mixed(FitFailureReason::InsufficientBins);
     }
+    if (!gaussian_result.fully_valid || !gaussian_result.radius.has_value() ||
+        !std::isfinite(gaussian_result.radius->value) ||
+        gaussian_result.radius->value <= 0.0) {
+        return invalid_mixed(FitFailureReason::InvalidGaussianCoreAnchor);
+    }
 
     const std::optional<RadiusSeeds> seeds = derive_radius_seeds(
         family,
@@ -592,76 +615,87 @@ MixedFitResult fit_mixed_model(
         return invalid_mixed(FitFailureReason::InvalidMomentSeed);
     }
 
-    MixedFitResult result = invalid_mixed(
-        FitFailureReason::MigradInvalid
-    );
-    MixedObjective objective_a(family, bins, offset, binning, region);
-    auto start_a = run_mixed_migrad(
-        objective_a,
-        seeds->gaussian,
-        seeds->exponential
-    );
-    result.starts[0U] = start_a.second;
-    result.starts_attempted = 1U;
+    const double core_seed = gaussian_result.radius->value;
+    const double tail_seed = seeds->exponential;
+    const std::array<double, MixedFitResult::kCoreStartCount> tail_scales{
+        1.0, 0.5, 2.0, 1.0, 1.0
+    };
+    const std::array<double, MixedFitResult::kCoreStartCount> fractions{
+        0.50, 0.50, 0.50, 0.25, 0.75
+    };
 
-    std::optional<std::pair<FunctionMinimum, MigradDiagnostic>> start_b;
-    if (gaussian_result.fully_valid && gaussian_result.radius.has_value()) {
-        MixedObjective objective_b(family, bins, offset, binning, region);
-        start_b = run_mixed_migrad(
-            objective_b,
-            gaussian_result.radius->value,
-            seeds->exponential
+    MixedFitResult result = invalid_mixed(FitFailureReason::MigradInvalid);
+    std::vector<MixedStartOutcome> outcomes;
+    outcomes.reserve(MixedFitResult::kCoreStartCount);
+    std::vector<std::size_t> valid_indices;
+    valid_indices.reserve(MixedFitResult::kCoreStartCount);
+
+    for (std::size_t index = 0U;
+         index < MixedFitResult::kCoreStartCount;
+         ++index) {
+        MixedObjective objective(family, bins, offset, binning, region);
+        auto start = run_mixed_migrad(
+            objective,
+            core_seed,
+            tail_seed * tail_scales[index],
+            fractions[index]
         );
-        result.starts[1U] = start_b->second;
-        result.starts_attempted = 2U;
-    }
+        result.starts[index] = start.second;
+        ++result.starts_attempted;
 
-    const FitFailureReason start_a_reason =
-        fit_failure_from_migrad(start_a.second);
-    const FitFailureReason start_b_reason = start_b.has_value()
-        ? fit_failure_from_migrad(start_b->second)
-        : FitFailureReason::MigradInvalid;
-    const bool valid_a = start_a_reason == FitFailureReason::None;
-    const bool valid_b = start_b.has_value() &&
-        start_b_reason == FitFailureReason::None;
-    if (!valid_a && !valid_b) {
-        if (start_a_reason == FitFailureReason::ObjectiveEvaluation ||
-            start_b_reason == FitFailureReason::ObjectiveEvaluation) {
-            result.failure_reason = FitFailureReason::ObjectiveEvaluation;
-        } else if (start_b.has_value()) {
-            result.failure_reason = start_b_reason;
-        } else {
-            result.failure_reason = start_a_reason;
+        MixedBasinPoint endpoint{
+            start.first.UserState().Value(0U),
+            start.first.UserState().Value(1U),
+            start.first.UserState().Value(2U)
+        };
+        outcomes.push_back({std::move(start.first), start.second, endpoint});
+        if (fit_failure_from_migrad(start.second) == FitFailureReason::None) {
+            valid_indices.push_back(index);
         }
+    }
+    result.valid_starts = valid_indices.size();
+    if (valid_indices.empty()) {
+        for (const MigradDiagnostic& diagnostic : result.starts) {
+            const FitFailureReason reason = fit_failure_from_migrad(diagnostic);
+            if (reason == FitFailureReason::ObjectiveEvaluation) {
+                result.failure_reason = reason;
+                return result;
+            }
+        }
+        result.failure_reason = fit_failure_from_migrad(result.starts[0U]);
         return result;
     }
 
-    const FunctionMinimum* selected = nullptr;
-    std::size_t selected_index = 0U;
-    if (valid_a && valid_b) {
-        const double q_a = start_a.second.q_min.value();
-        const double q_b = start_b->second.q_min.value();
-        result.exact_q_tie = q_a == q_b;
-        if (q_b < q_a) {
-            selected = &start_b->first;
-            selected_index = 1U;
-        } else {
-            selected = &start_a.first;
-        }
-    } else if (valid_a) {
-        selected = &start_a.first;
-    } else {
-        selected = &start_b->first;
-        selected_index = 1U;
+    std::vector<MixedBasinPoint> endpoints;
+    endpoints.reserve(outcomes.size());
+    for (const MixedStartOutcome& outcome : outcomes) {
+        endpoints.push_back(outcome.endpoint);
+    }
+    const std::vector<std::size_t> consensus = largest_mixed_basin_group(
+        endpoints,
+        valid_indices
+    );
+    result.consensus_size = consensus.size();
+    if (consensus.size() < 4U) {
+        result.failure_reason = FitFailureReason::NoBasinConsensus;
+        return result;
     }
 
-    result.selected_start = selected_index;
-    result.selected_migrad = result.starts[selected_index];
+    std::size_t selected_index = consensus.front();
+    for (const std::size_t index : consensus) {
+        if (outcomes[index].diagnostic.q_min.value() <
+            outcomes[selected_index].diagnostic.q_min.value()) {
+            selected_index = index;
+        }
+    }
+    result.selected_core_start = selected_index;
+    result.selected_migrad = outcomes[selected_index].diagnostic;
     result.q_min = result.selected_migrad.q_min;
 
-    const double log_core = selected->UserState().Value(0U);
-    const double log_tail = selected->UserState().Value(1U);
-    const double core_fraction = selected->UserState().Value(2U);
+    FunctionMinimum& selected = outcomes[selected_index].minimum;
+    const double log_core = selected.UserState().Value(0U);
+    const double log_tail = selected.UserState().Value(1U);
+    const double core_fraction = selected.UserState().Value(2U);
     const double core_radius = std::exp(log_core);
     const double tail_radius = std::exp(log_tail);
     if (!std::isfinite(core_radius) || !std::isfinite(tail_radius) ||
@@ -670,7 +704,6 @@ MixedFitResult fit_mixed_model(
         result.failure_reason = FitFailureReason::NonFiniteMinimum;
         return result;
     }
-    result.tail_below_core = tail_radius < core_radius;
     const FitFailureReason fraction_reason =
         mixed_core_fraction_failure(core_fraction);
     if (fraction_reason != FitFailureReason::None) {
@@ -693,14 +726,8 @@ MixedFitResult fit_mixed_model(
         return result;
     }
 
-    MixedObjective selected_objective(
-        family,
-        bins,
-        offset,
-        binning,
-        region
-    );
-    MnMinos minos(selected_objective, *selected);
+    MixedObjective selected_objective(family, bins, offset, binning, region);
+    MnMinos minos(selected_objective, selected);
     const MinosError core_error = minos.Minos(0U);
     result.minos_core_radius = minos_diagnostic(core_error);
     FitFailureReason minos_reason = fit_failure_from_minos(
@@ -722,10 +749,7 @@ MixedFitResult fit_mixed_model(
 
     const MinosError fraction_error = minos.Minos(2U);
     result.minos_core_fraction = minos_diagnostic(fraction_error);
-    minos_reason = fit_failure_from_minos(
-        result.minos_core_fraction,
-        true
-    );
+    minos_reason = fit_failure_from_minos(result.minos_core_fraction, true);
     if (minos_reason != FitFailureReason::None) {
         result.failure_reason = minos_reason;
         return result;
@@ -740,14 +764,8 @@ MixedFitResult fit_mixed_model(
     }
 
     try {
-        result.core_radius = physical_radius_estimate(
-            log_core,
-            core_error
-        );
-        result.tail_radius = physical_radius_estimate(
-            log_tail,
-            tail_error
-        );
+        result.core_radius = physical_radius_estimate(log_core, core_error);
+        result.tail_radius = physical_radius_estimate(log_tail, tail_error);
         result.core_fraction = direct_parameter_estimate(
             core_fraction,
             fraction_error

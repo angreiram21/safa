@@ -45,14 +45,17 @@ namespace hbt {
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated uniform binning for this histogram family.
  * @param region Selected contiguous statistical region.
- * @param gaussian_result Independent pure-Gaussian result for optional start B.
- * @return Complete multistart fit result and explicit diagnostics.
+ * @param gaussian_result Valid truncated Gaussian-core result from the same
+ *        histogram and observable geometry. Its radius seeds every core start.
+ * @return Complete consensus-multistart fit result and explicit diagnostics.
  * @throws std::out_of_range If the selected raw slot is unavailable.
  *
- * Start A derives both radius scales from raw moments. Start B exists only
- * when @p gaussian_result is fully valid; it reuses its fitted R for the core
- * and retains the data-derived tail seed. MIGRAD runs independently for each
- * start. MINOS runs only on the valid minimum with the smallest objective.
+ * Five deterministic starts share R_core(0)=R_G^core from
+ * @p gaussian_result. Their R_tail and f_core seeds are (R_tail,mom,0.50),
+ * (0.5 R_tail,mom,0.50), (2 R_tail,mom,0.50), (R_tail,mom,0.25), and
+ * (R_tail,mom,0.75). A result is publishable only when at least four starts
+ * converge to the same numerical basin. Q selects the best realization only
+ * inside that consensus basin; no ordering of R_core and R_tail is imposed.
  */
 [[nodiscard]] MixedFitResult fit_mixed_model(
     FitObservableFamily family,

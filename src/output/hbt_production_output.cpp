@@ -7,6 +7,7 @@
 
 #include "hbt/channels/channel_catalog.h"
 #include "hbt/fits/histogram_analysis.h"
+#include "hbt/fits/statistical_analysis.h"
 #include "hbt/fits/fit_results.h"
 #include "hbt/histograms/raw_histograms.h"
 
@@ -17,6 +18,7 @@
 #include <iomanip>
 #include <optional>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 
 namespace output {
@@ -119,21 +121,110 @@ std::string product_token(std::size_t product_index) {
 }
 
 /**
- * @brief Construct one global/slice directory token.
- * @param slice_index std::nullopt for global, otherwise flat slice index.
- * @return Canonical serialization-only scope directory token.
+ * @brief Format one configured slicing edge as a filesystem-safe decimal.
+ * @param value Finite validated kT/mT bin edge in GeV.
+ * @return Decimal token without trailing zero padding or scientific notation.
  */
-std::string scope_token(std::optional<std::size_t> slice_index) {
+std::string slice_edge_token(double value) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(12) << value;
+    std::string token = stream.str();
+    while (token.size() > 1U && token.back() == '0') {
+        token.pop_back();
+    }
+    if (!token.empty() && token.back() == '.') {
+        token.pop_back();
+    }
+    if (token == "-0") {
+        token = "0";
+    }
+    return token;
+}
+
+/**
+ * @brief Resolve one flat kinetic-slice index into configured axis indices.
+ * @param slicing Validated kT/mT slicing configuration.
+ * @param flat_index Stable flat slice index used by raw/derived state.
+ * @return Pair of optional kT and mT indices matching routing layout.
+ * @throws std::out_of_range If @p flat_index is not configured.
+ */
+std::pair<std::optional<std::size_t>, std::optional<std::size_t>>
+slice_axis_indices(
+    const hbt::PairSlicingConfig& slicing,
+    std::size_t flat_index
+) {
+    const std::size_t kt_count = slicing.kt.enabled
+        ? slicing.kt.bin_edges_gev.size() - 1U : 0U;
+    const std::size_t mt_count = slicing.mt.enabled
+        ? slicing.mt.bin_edges_gev.size() - 1U : 0U;
+    if (slicing.kt.enabled && slicing.mt.enabled) {
+        if (mt_count == 0U || flat_index >= kt_count * mt_count) {
+            throw std::out_of_range("output: flat slice index is out of range");
+        }
+        return {flat_index / mt_count, flat_index % mt_count};
+    }
+    if (slicing.kt.enabled) {
+        if (flat_index >= kt_count) {
+            throw std::out_of_range("output: kT slice index is out of range");
+        }
+        return {flat_index, std::nullopt};
+    }
+    if (slicing.mt.enabled) {
+        if (flat_index >= mt_count) {
+            throw std::out_of_range("output: mT slice index is out of range");
+        }
+        return {std::nullopt, flat_index};
+    }
+    throw std::out_of_range("output: slice index exists while slicing is disabled");
+}
+
+/**
+ * @brief Construct one global/configuration-derived slice directory token.
+ * @param slicing Validated user-configured kT/mT slice boundaries.
+ * @param slice_index std::nullopt for global, otherwise flat slice index.
+ * @return Canonical scope token derived from the actual configured edges.
+ *
+ * One enabled mT axis produces e.g. `mT_slice0_0.5-0.7`; kT is analogous.
+ * When both axes are enabled the two axis tokens are joined by `__`. No bin
+ * width, lower edge, upper edge, or axis choice is hard-coded.
+ */
+std::string scope_token(
+    const hbt::PairSlicingConfig& slicing,
+    std::optional<std::size_t> slice_index
+) {
     if (!slice_index.has_value()) {
         return "global";
     }
-    return "slice_" + std::to_string(slice_index.value());
+    const auto indices = slice_axis_indices(slicing, slice_index.value());
+    std::string token;
+    const auto append_axis = [&token](
+        const char* axis,
+        std::size_t index,
+        const hbt::PairSlicingAxisConfig& config
+    ) {
+        if (!token.empty()) {
+            token += "__";
+        }
+        token += axis;
+        token += "_slice" + std::to_string(index) + "_";
+        token += slice_edge_token(config.bin_edges_gev[index]);
+        token += "-";
+        token += slice_edge_token(config.bin_edges_gev[index + 1U]);
+    };
+    if (indices.first.has_value()) {
+        append_axis("kT", indices.first.value(), slicing.kt);
+    }
+    if (indices.second.has_value()) {
+        append_axis("mT", indices.second.value(), slicing.mt);
+    }
+    return token;
 }
 
 /**
  * @brief Return one complete canonical observable directory.
  * @param root Explicit output root.
  * @param product_index Stable configured product index.
+ * @param slicing Validated user-configured kT/mT slicing boundaries.
  * @param slice_index Global or stable flat-slice index.
  * @param origin Physical origin token.
  * @param location Frame/family/observable serialization identity.
@@ -142,13 +233,14 @@ std::string scope_token(std::optional<std::size_t> slice_index) {
 std::filesystem::path observable_directory(
     const std::filesystem::path& root,
     std::size_t product_index,
+    const hbt::PairSlicingConfig& slicing,
     std::optional<std::size_t> slice_index,
     const char* origin,
     const ObservableLocation& location
 ) {
     return root /
         product_token(product_index) /
-        scope_token(slice_index) /
+        scope_token(slicing, slice_index) /
         origin /
         location.frame /
         location.family /
@@ -354,6 +446,8 @@ void write_migrad_fields(
     output << ',';
     write_bool(output, diagnostic.valid);
     output << ',';
+    write_bool(output, diagnostic.valid_covariance);
+    output << ',';
     write_bool(output, diagnostic.reached_call_limit);
     output << ',';
     write_bool(output, diagnostic.above_max_edm);
@@ -371,28 +465,65 @@ void write_parameter_header(std::ostream& output) {
     output
         << "product_index,origin,scope,slice_index,frame,family,observable,"
         << "model,parameter,fully_valid,failure_reason,q_min,value,"
-        << "error_minus,error_plus,migrad_attempted,migrad_valid,"
+        << "error_minus,error_plus,fit_first_bin,fit_last_bin,N_fit,"
+        << "fit_lower_edge,fit_upper_edge,"
+        << "migrad_attempted,migrad_valid,migrad_valid_covariance,"
         << "migrad_call_limit,migrad_above_max_edm,objective_failure,"
         << "migrad_function_calls,migrad_q_min,"
         << "minos_attempted,minos_lower_valid,minos_upper_valid,"
         << "minos_at_lower_limit,minos_at_upper_limit,"
         << "minos_lower_call_limit,minos_upper_call_limit,"
         << "minos_lower_new_minimum,minos_upper_new_minimum,"
-        << "selected_start,exact_q_tie,tail_below_core,"
-        << "start_a_attempted,start_a_valid,start_a_call_limit,"
-        << "start_a_above_max_edm,start_a_objective_failure,"
-        << "start_a_function_calls,start_a_q_min,"
-        << "start_b_attempted,start_b_valid,start_b_call_limit,"
-        << "start_b_above_max_edm,start_b_objective_failure,"
-        << "start_b_function_calls,start_b_q_min\n";
+        << "core_starts_attempted,valid_core_starts,consensus_size,"
+        << "selected_core_start";
+    for (std::size_t index = 0U;
+         index < hbt::MixedFitResult::kCoreStartCount;
+         ++index) {
+        output << ",core_start" << index << "_attempted"
+               << ",core_start" << index << "_valid"
+               << ",core_start" << index << "_valid_covariance"
+               << ",core_start" << index << "_call_limit"
+               << ",core_start" << index << "_above_max_edm"
+               << ",core_start" << index << "_objective_failure"
+               << ",core_start" << index << "_function_calls"
+               << ",core_start" << index << "_q_min";
+    }
+    output << '\n';
 }
 
 /**
- * @brief Return one unattempted start diagnostic for Gaussian CSV padding.
- * @return Stable unattempted MIGRAD state.
+ * @brief Write the physical/statistical range used by one fit.
+ * @param output Destination CSV stream.
+ * @param region Exact selected fit region.
+ * @param binning Owning uniform histogram binning.
  */
-hbt::MigradDiagnostic unattempted_migrad() {
-    return {false, false, false, false, false, 0, std::nullopt};
+void write_fit_region_fields(
+    std::ostream& output,
+    const std::optional<hbt::StatisticalRegion>& region,
+    const hbt::HistogramBinningConfig& binning
+) {
+    if (!region.has_value()) {
+        output << ",,,,,";
+        return;
+    }
+    output << ',' << region->first_bin
+           << ',' << region->last_bin
+           << ',' << region->selected_count
+           << ',' << hbt::histogram_bin_lower_edge(binning, region->first_bin)
+           << ',' << hbt::histogram_bin_upper_edge(binning, region->last_bin);
+}
+
+/**
+ * @brief Write empty mixed-only columns for one Gaussian parameter row.
+ * @param output Destination CSV stream.
+ */
+void write_empty_mixed_fields(std::ostream& output) {
+    output << ",,,,";
+    for (std::size_t index = 0U;
+         index < hbt::MixedFitResult::kCoreStartCount;
+         ++index) {
+        output << ",,,,,,,,";
+    }
 }
 
 /**
@@ -403,6 +534,8 @@ hbt::MigradDiagnostic unattempted_migrad() {
  * @param slice_index Global or flat-slice identity.
  * @param location Observable presentation identity.
  * @param result Completed independent Gaussian fit result.
+ * @param fit_region Compact statistical region actually fitted by the Gaussian.
+ * @param binning Owning uniform histogram binning used for physical edges.
  */
 void write_gaussian_row(
     std::ostream& output,
@@ -410,7 +543,9 @@ void write_gaussian_row(
     const char* origin,
     std::optional<std::size_t> slice_index,
     const ObservableLocation& location,
-    const hbt::GaussianFitResult& result
+    const hbt::GaussianFitResult& result,
+    const std::optional<hbt::StatisticalRegion>& fit_region,
+    const hbt::HistogramBinningConfig& binning
 ) {
     write_identity_fields(
         output,
@@ -419,7 +554,7 @@ void write_gaussian_row(
         slice_index,
         location
     );
-    output << ",gaussian,R,";
+    output << ",gaussian,R_G_core,";
     write_bool(output, result.fully_valid);
     output << ',' << hbt::fit_failure_reason_token(result.failure_reason)
            << ',';
@@ -432,11 +567,10 @@ void write_gaussian_row(
     } else {
         output << ",,";
     }
+    write_fit_region_fields(output, fit_region, binning);
     write_migrad_fields(output, result.migrad);
     write_minos_fields(output, result.minos_radius);
-    output << ",,,";
-    write_migrad_fields(output, result.migrad);
-    write_migrad_fields(output, unattempted_migrad());
+    write_empty_mixed_fields(output);
     output << '\n';
 }
 
@@ -449,20 +583,16 @@ void write_mixed_shared_fields(
     std::ostream& output,
     const hbt::MixedFitResult& result
 ) {
-    output << ',';
-    if (result.selected_start.has_value()) {
-        output << (result.selected_start.value() == 0U ? 'A' : 'B');
+    output << ',' << result.starts_attempted
+           << ',' << result.valid_starts
+           << ',' << result.consensus_size
+           << ',';
+    if (result.selected_core_start.has_value()) {
+        output << result.selected_core_start.value();
     }
-    output << ',';
-    if (result.selected_start.has_value()) {
-        write_bool(output, result.exact_q_tie);
+    for (const hbt::MigradDiagnostic& start : result.starts) {
+        write_migrad_fields(output, start);
     }
-    output << ',';
-    if (result.selected_start.has_value()) {
-        write_bool(output, result.tail_below_core);
-    }
-    write_migrad_fields(output, result.starts[0U]);
-    write_migrad_fields(output, result.starts[1U]);
 }
 
 /**
@@ -473,6 +603,8 @@ void write_mixed_shared_fields(
  * @param slice_index Global or flat-slice identity.
  * @param location Observable presentation identity.
  * @param result Completed independent mixed-model fit result.
+ * @param fit_region Full statistical region actually fitted by the mixed model.
+ * @param binning Owning uniform histogram binning used for physical edges.
  * @param parameter Stable physical parameter name.
  * @param estimate Published physical parameter estimate when fully valid.
  * @param minos Matching parameter MINOS diagnostics.
@@ -484,6 +616,8 @@ void write_mixed_row(
     std::optional<std::size_t> slice_index,
     const ObservableLocation& location,
     const hbt::MixedFitResult& result,
+    const std::optional<hbt::StatisticalRegion>& fit_region,
+    const hbt::HistogramBinningConfig& binning,
     const char* parameter,
     const std::optional<hbt::FitParameterEstimate>& estimate,
     const hbt::MinosDiagnostic& minos
@@ -508,6 +642,7 @@ void write_mixed_row(
     } else {
         output << ",,";
     }
+    write_fit_region_fields(output, fit_region, binning);
     write_migrad_fields(output, result.selected_migrad);
     write_minos_fields(output, minos);
     write_mixed_shared_fields(output, result);
@@ -517,23 +652,28 @@ void write_mixed_row(
 /**
  * @brief Serialize one shape histogram distribution and fit-state table.
  * @param root Explicit production root.
+ * @param slicing Validated user-configured kT/mT slicing boundaries.
  * @param product_index Stable configured final-product index.
  * @param origin Physical origin token.
  * @param slice_index Global or flat-slice identity.
  * @param location Frame/family/observable serialization identity.
+ * @param binning Owning shape-histogram binning for fitted-range metadata.
  * @param result Completed derived shape result.
  */
 void write_shape_result(
     const std::filesystem::path& root,
+    const hbt::PairSlicingConfig& slicing,
     std::size_t product_index,
     const char* origin,
     std::optional<std::size_t> slice_index,
     const ObservableLocation& location,
+    const hbt::HistogramBinningConfig& binning,
     const hbt::ShapeHistogramResult& result
 ) {
     const std::filesystem::path directory = observable_directory(
         root,
         product_index,
+        slicing,
         slice_index,
         origin,
         location
@@ -566,7 +706,15 @@ void write_shape_result(
                          << bin.pdf << ','
                          << bin.counting_error_pdf;
             if (result.gaussian.fully_valid) {
-                distribution << ',' << result.gaussian.fitted_pdf[index];
+                distribution << ',';
+                const std::size_t raw_bin = bin.bin_index;
+                if (result.gaussian_core_region.has_value() &&
+                    raw_bin >= result.gaussian_core_region->first_bin &&
+                    raw_bin <= result.gaussian_core_region->last_bin) {
+                    const std::size_t fit_index =
+                        raw_bin - result.gaussian_core_region->first_bin;
+                    distribution << result.gaussian.fitted_pdf[fit_index];
+                }
             }
             if (result.mixed.fully_valid) {
                 distribution << ',' << result.mixed.fitted_pdf[index];
@@ -587,7 +735,9 @@ void write_shape_result(
         origin,
         slice_index,
         location,
-        result.gaussian
+        result.gaussian,
+        result.gaussian_core_region,
+        binning
     );
     const std::optional<hbt::FitParameterEstimate> core_radius =
         result.mixed.fully_valid ? result.mixed.core_radius : std::nullopt;
@@ -602,6 +752,8 @@ void write_shape_result(
         slice_index,
         location,
         result.mixed,
+        result.region,
+        binning,
         "R_core",
         core_radius,
         result.mixed.minos_core_radius
@@ -613,6 +765,8 @@ void write_shape_result(
         slice_index,
         location,
         result.mixed,
+        result.region,
+        binning,
         "R_tail",
         tail_radius,
         result.mixed.minos_tail_radius
@@ -624,6 +778,8 @@ void write_shape_result(
         slice_index,
         location,
         result.mixed,
+        result.region,
+        binning,
         "f_core",
         core_fraction,
         result.mixed.minos_core_fraction
@@ -634,6 +790,7 @@ void write_shape_result(
 /**
  * @brief Serialize one delta-t distribution and moment/status table.
  * @param root Explicit production root.
+ * @param slicing Validated user-configured kT/mT slicing boundaries.
  * @param product_index Stable configured final-product index.
  * @param origin Physical origin token.
  * @param slice_index Global or flat-slice identity.
@@ -642,6 +799,7 @@ void write_shape_result(
  */
 void write_delta_t_result(
     const std::filesystem::path& root,
+    const hbt::PairSlicingConfig& slicing,
     std::size_t product_index,
     const char* origin,
     std::optional<std::size_t> slice_index,
@@ -651,6 +809,7 @@ void write_delta_t_result(
     const std::filesystem::path directory = observable_directory(
         root,
         product_index,
+        slicing,
         slice_index,
         origin,
         location
@@ -701,8 +860,10 @@ void write_delta_t_result(
 }
 
 /**
- * @brief Serialize all nine canonical observables of one derived destination.
+ * @brief Serialize all canonical observables of one derived destination.
  * @param root Explicit production root.
+ * @param slicing Validated user-configured kT/mT slicing boundaries.
+ * @param histogram_config Validated binning used by the derived histograms.
  * @param product_index Stable configured product index.
  * @param origin Physical P/PR/PRD token.
  * @param slice_index Global or flat-slice identity.
@@ -710,34 +871,46 @@ void write_delta_t_result(
  */
 void write_derived_set(
     const std::filesystem::path& root,
+    const hbt::PairSlicingConfig& slicing,
+    const hbt::HBTHistogramConfig& histogram_config,
     std::size_t product_index,
     const char* origin,
     std::optional<std::size_t> slice_index,
     const hbt::DerivedHistogramSet& derived
 ) {
-    for (std::size_t slot = 0U; slot < derived.osl.size(); ++slot) {
-        write_shape_result(
-            root,
-            product_index,
-            origin,
-            slice_index,
-            osl_location(slot),
-            derived.osl[slot]
-        );
+    // OSL observables are global-only by the approved fit contract. Kinetic
+    // slicing is used to extract radial R_core versus kT/mT and must not create
+    // OSL slice directories.
+    if (!slice_index.has_value()) {
+        for (std::size_t slot = 0U; slot < derived.osl.size(); ++slot) {
+            write_shape_result(
+                root,
+                slicing,
+                product_index,
+                origin,
+                slice_index,
+                osl_location(slot),
+                histogram_config.osl,
+                derived.osl[slot]
+            );
+        }
     }
     for (std::size_t slot = 0U; slot < derived.radial.size(); ++slot) {
         write_shape_result(
             root,
+            slicing,
             product_index,
             origin,
             slice_index,
             radial_location(slot),
+            histogram_config.radial,
             derived.radial[slot]
         );
     }
     for (std::size_t slot = 0U; slot < derived.delta_t.size(); ++slot) {
         write_delta_t_result(
             root,
+            slicing,
             product_index,
             origin,
             slice_index,
@@ -745,6 +918,7 @@ void write_derived_set(
             derived.delta_t[slot]
         );
     }
+
 }
 
 /**
@@ -821,6 +995,8 @@ void write_hbt_production_output(
                 product_state.origins[origin];
             write_derived_set(
                 output_root,
+                config.pair_slicing,
+                config.histogram_config,
                 product,
                 token,
                 std::nullopt,
@@ -831,6 +1007,8 @@ void write_hbt_production_output(
                  ++slice) {
                 write_derived_set(
                     output_root,
+                    config.pair_slicing,
+                    config.histogram_config,
                     product,
                     token,
                     slice,

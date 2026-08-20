@@ -108,6 +108,66 @@ std::pair<std::size_t, std::size_t> modal_plateau(
     return {left, right};
 }
 
+/**
+ * @brief Return non-increasing PAVA block levels for one contiguous interval.
+ * @param bins Flattened raw count storage.
+ * @param offset First logical histogram counter.
+ * @param first Inclusive first bin to estimate.
+ * @param last Inclusive last bin to estimate.
+ * @return One monotonic long-double level per input bin.
+ *
+ * Adjacent blocks are pooled whenever the left block is lower than the right
+ * block. Raw counts are never modified; this estimate is only a cut selector.
+ */
+std::vector<long double> nonincreasing_pava(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    std::size_t first,
+    std::size_t last
+) {
+    struct Block {
+        long double sum;
+        std::size_t count;
+    };
+
+    std::vector<Block> blocks;
+    blocks.reserve(last - first + 1U);
+    for (std::size_t bin = first; bin <= last; ++bin) {
+        blocks.push_back({
+            static_cast<long double>(bins[offset + bin]),
+            1U
+        });
+        while (blocks.size() >= 2U) {
+            const Block& left = blocks[blocks.size() - 2U];
+            const Block& right = blocks.back();
+            const long double left_mean =
+                left.sum / static_cast<long double>(left.count);
+            const long double right_mean =
+                right.sum / static_cast<long double>(right.count);
+            if (left_mean >= right_mean) {
+                break;
+            }
+            Block merged{
+                left.sum + right.sum,
+                left.count + right.count
+            };
+            blocks.pop_back();
+            blocks.back() = merged;
+        }
+    }
+
+    std::vector<long double> levels;
+    levels.reserve(last - first + 1U);
+    for (const Block& block : blocks) {
+        const long double mean =
+            block.sum / static_cast<long double>(block.count);
+        for (std::size_t index = 0U; index < block.count; ++index) {
+            levels.push_back(mean);
+        }
+    }
+    return levels;
+}
+
 }  // namespace
 
 std::optional<StatisticalRegion> select_shape_region(
@@ -139,6 +199,100 @@ std::optional<StatisticalRegion> select_shape_region(
         }
     }
 
+    return StatisticalRegion{0U, last, sum_region(bins, offset, 0U, last)};
+}
+
+std::optional<StatisticalRegion> select_gaussian_core_region(
+    FitObservableFamily family,
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& full_region,
+    double threshold_fraction
+) {
+    if (!std::isfinite(threshold_fraction) ||
+        threshold_fraction <= 0.0 || threshold_fraction >= 1.0) {
+        throw std::invalid_argument(
+            "HBT Gaussian core selection: threshold fraction must be in (0,1)"
+        );
+    }
+    require_slot_range(bins, offset, binning.nbins);
+    if (full_region.first_bin != 0U ||
+        full_region.last_bin >= binning.nbins ||
+        full_region.selected_count == 0U) {
+        throw std::out_of_range(
+            "HBT Gaussian core selection: full shape region is invalid"
+        );
+    }
+
+    std::size_t branch_first = 0U;
+    std::size_t branch_last = full_region.last_bin;
+    long double reference = 0.0L;
+
+    switch (family) {
+        case FitObservableFamily::Radial: {
+            const auto mode = modal_plateau(bins, offset, binning.nbins);
+            if (mode.second > branch_last) {
+                return std::nullopt;
+            }
+            branch_first = mode.second;
+            reference = static_cast<long double>(bins[offset + mode.second]);
+            break;
+        }
+        case FitObservableFamily::OSL: {
+            for (std::size_t bin = 0U; bin <= full_region.last_bin; ++bin) {
+                if (bins[offset + bin] == 0U) {
+                    if (bin == 0U) {
+                        return std::nullopt;
+                    }
+                    branch_last = bin - 1U;
+                    break;
+                }
+            }
+            if (branch_last < branch_first) {
+                return std::nullopt;
+            }
+            break;
+        }
+    }
+
+    const std::vector<long double> levels = nonincreasing_pava(
+        bins,
+        offset,
+        branch_first,
+        branch_last
+    );
+    if (levels.empty()) {
+        return std::nullopt;
+    }
+    if (family == FitObservableFamily::OSL) {
+        reference = levels.front();
+    }
+    if (!(reference > 0.0L)) {
+        return std::nullopt;
+    }
+
+    const long double threshold =
+        static_cast<long double>(threshold_fraction) * reference;
+    std::size_t last = branch_last;
+    bool crossed = false;
+    for (std::size_t local = 0U; local < levels.size(); ++local) {
+        const std::size_t bin = branch_first + local;
+        if (levels[local] <= threshold) {
+            if (bin == 0U) {
+                return std::nullopt;
+            }
+            last = bin - 1U;
+            crossed = true;
+            break;
+        }
+    }
+    if (!crossed) {
+        last = branch_last;
+    }
+    if (last >= binning.nbins) {
+        return std::nullopt;
+    }
     return StatisticalRegion{0U, last, sum_region(bins, offset, 0U, last)};
 }
 

@@ -38,7 +38,7 @@ bool fail(const char* message) {
 
 /**
  * @brief Construct one compact validated-style HBT configuration.
- * @return One product, one origin, no slices, and explicit histogram binning.
+ * @return One product, one origin, configured mT slices, and explicit binning.
  */
 hbt::HBTConfig make_config() {
     return {
@@ -57,7 +57,7 @@ hbt::HBTConfig make_config() {
             {0.8, 1.0, 10000.0},
             {0.8, 0.3, 10000.0}
         },
-        {{false, {}}, {false, {}}},
+        {{false, {}}, {true, {0.5, 0.7, 0.9}}},
         {
             {20U, 0.0, 10.0, 2.0},
             {20U, 0.0, 10.0, 2.0},
@@ -170,6 +170,24 @@ bool verify_analysis_and_output() {
         global.delta_t.bins[bin] = delta_counts[bin];
     }
 
+    // Populate one radial mT slice below the provisional production quality
+    // cut. The distribution is non-empty and normalizable, but neither the
+    // Gaussian nor mixed result may be published as conclusive.
+    hbt::RawHistogramSet& low_stat_slice =
+        raw.products[0U].origins[0U].slices[0U];
+    const std::vector<double> radial_probabilities =
+        hbt::gaussian_bin_probabilities(
+            hbt::FitObservableFamily::Radial,
+            config.histogram_config.radial,
+            model_region,
+            1.2
+        );
+    const std::vector<std::uint64_t> radial_counts =
+        make_counts(radial_probabilities, 5000U);
+    for (std::size_t bin = 0U; bin < radial_counts.size(); ++bin) {
+        low_stat_slice.radial.bins[bin] = radial_counts[bin];
+    }
+
     const std::vector<std::uint64_t> original_osl = global.osl.bins;
     const std::vector<std::uint64_t> original_delta_t = global.delta_t.bins;
     const hbt::HistogramAnalysisState derived =
@@ -191,6 +209,30 @@ bool verify_analysis_and_output() {
     }
     if (std::fabs(normalized_integral - 1.0) > 1.0e-12) {
         return fail("final normalized distribution does not integrate to one");
+    }
+
+    const hbt::ShapeHistogramResult& slice_osl =
+        derived.products[0U].origins[0U].slices[0U].osl[0U];
+    if (slice_osl.gaussian.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
+        slice_osl.mixed.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
+        slice_osl.gaussian.migrad.attempted ||
+        slice_osl.mixed.starts_attempted != 0U) {
+        return fail("OSL kinetic slice unexpectedly executed a fit");
+    }
+
+    const hbt::ShapeHistogramResult& low_stat_radial =
+        derived.products[0U].origins[0U].slices[0U].radial[0U];
+    if (!low_stat_radial.region.has_value() ||
+        low_stat_radial.selected_count >= 10000U ||
+        low_stat_radial.gaussian.fully_valid ||
+        low_stat_radial.mixed.fully_valid ||
+        low_stat_radial.gaussian.failure_reason !=
+            hbt::FitFailureReason::InsufficientStatistics ||
+        low_stat_radial.mixed.failure_reason !=
+            hbt::FitFailureReason::InsufficientStatistics) {
+        return fail("radial mT low-statistics quality cut was not enforced");
     }
 
     const std::filesystem::path root =
@@ -302,16 +344,46 @@ bool verify_analysis_and_output() {
     const std::string valid_parameters =
         read_text(lcms_out / "fit_parameters.csv");
     if (valid_parameters.find("minos_lower_valid") == std::string::npos ||
-        valid_parameters.find("selected_start") == std::string::npos ||
-        valid_parameters.find("start_a_valid") == std::string::npos ||
-        valid_parameters.find("start_b_valid") == std::string::npos) {
+        valid_parameters.find("fit_upper_edge") == std::string::npos ||
+        valid_parameters.find("R_G_core") == std::string::npos ||
+        valid_parameters.find("consensus_size") == std::string::npos ||
+        valid_parameters.find("core_start0_valid") == std::string::npos ||
+        valid_parameters.find("core_start4_valid") == std::string::npos ||
+        valid_parameters.find("tail_below_core") != std::string::npos ||
+        valid_parameters.find("start_a_valid") != std::string::npos ||
+        valid_parameters.find("start_b_valid") != std::string::npos) {
         std::filesystem::remove_all(root);
-        return fail("fit diagnostics are missing from the parameter table");
+        return fail("new fit diagnostics are missing or legacy A/B fields remain");
     }
     if (!csv_is_rectangular(lcms_out / "fit_parameters.csv") ||
         !csv_is_rectangular(lcms_side / "fit_parameters.csv")) {
         std::filesystem::remove_all(root);
         return fail("fit parameter CSV columns are misaligned");
+    }
+
+    const std::filesystem::path slice0 =
+        root / "product_0" / "mT_slice0_0.5-0.7" / "P";
+    const std::filesystem::path slice1 =
+        root / "product_0" / "mT_slice1_0.7-0.9" / "P";
+    if (!std::filesystem::exists(
+            slice0 / "LCMS" / "radial" / "r_radial" /
+            "fit_parameters.csv") ||
+        !std::filesystem::exists(
+            slice1 / "PRF" / "radial" / "r_radial" /
+            "fit_parameters.csv") ||
+        std::filesystem::exists(slice0 / "LCMS" / "osl") ||
+        std::filesystem::exists(root / "product_0" / "slice_0")) {
+        std::filesystem::remove_all(root);
+        return fail("configured slice ranges were not used as directory names");
+    }
+
+    const std::string low_stat_parameters = read_text(
+        slice0 / "LCMS" / "radial" / "r_radial" / "fit_parameters.csv"
+    );
+    if (low_stat_parameters.find("insufficient_statistics") ==
+        std::string::npos) {
+        std::filesystem::remove_all(root);
+        return fail("low-statistics radial slice lost its explicit status");
     }
 
     for (const auto& entry :
@@ -328,6 +400,73 @@ bool verify_analysis_and_output() {
     return true;
 }
 
+/**
+ * @brief Verify kT/mT directory tokens follow arbitrary configured edges.
+ * @return true when Cartesian slice names preserve both configured ranges.
+ *
+ * This case intentionally uses 0.25-GeV intervals to prove the serializer is
+ * independent of the 0.20-GeV production mT choice. Empty histograms avoid
+ * introducing additional fit behavior into this naming-only regression.
+ */
+bool verify_cartesian_slice_directory_names() {
+    hbt::HBTConfig config = make_config();
+    config.pair_slicing = {
+        {true, {0.10, 0.35, 0.60}},
+        {true, {0.50, 0.75, 1.00}}
+    };
+
+    const hbt::RawHistogramState raw =
+        hbt::make_zero_raw_histogram_state(config);
+    const hbt::HistogramAnalysisState derived =
+        hbt::analyze_histograms(config, raw);
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "hbt_production_output_cartesian_slice_test";
+    std::filesystem::remove_all(root);
+
+    const config::RunConfig run_config{
+        {},
+        root,
+        1U,
+        1U,
+        true,
+        std::filesystem::path{"unused_hbt.yaml"}
+    };
+    const app::AnalysisStartupState startup{
+        run_config,
+        config,
+        hbt::build_hbt_startup_state(config)
+    };
+    app::AnalysisRunSummary summary{
+        startup,
+        std::nullopt,
+        std::nullopt,
+        raw,
+        derived
+    };
+    output::write_production_output(summary);
+
+    const std::filesystem::path expected =
+        root / "product_0" /
+        "kT_slice1_0.35-0.6__mT_slice1_0.75-1" / "P" /
+        "LCMS" / "radial" / "r_radial" / "fit_parameters.csv";
+    const std::filesystem::path forbidden_osl =
+        root / "product_0" /
+        "kT_slice0_0.1-0.35__mT_slice0_0.5-0.75" / "P" /
+        "LCMS" / "osl";
+    const bool valid = std::filesystem::exists(expected) &&
+        !std::filesystem::exists(forbidden_osl) &&
+        !std::filesystem::exists(root / "product_0" / "slice_3");
+    std::filesystem::remove_all(root);
+    if (!valid) {
+        return fail(
+            "Cartesian kT/mT slice directories ignored configured edge values"
+        );
+    }
+    return true;
+}
+
 }  // namespace
 
 /**
@@ -338,7 +477,8 @@ bool verify_analysis_and_output() {
  */
 int main() {
     try {
-        if (!verify_analysis_and_output()) {
+        if (!verify_analysis_and_output() ||
+            !verify_cartesian_slice_directory_names()) {
             return EXIT_FAILURE;
         }
     } catch (const std::exception& error) {

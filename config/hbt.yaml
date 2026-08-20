@@ -45,16 +45,20 @@ hbt_pair_slicing:
     enabled: false
 
   mt:
-    enabled: false
+    enabled: true
     bin_edges_gev:
       - 0.50
-      - 0.75
-      - 1.00
-      - 1.25
+      - 0.70
+      - 0.90
+      - 1.10
+      - 1.30
       - 1.50
-      - 1.75
-      - 2.00
-      - 2.25
+      - 1.70
+      - 1.90
+      - 2.10
+      - 2.30
+      - 2.50
+      - 2.70
 
 # Raw source histograms. These bins are independent of kT/mT slicing.
 # OSL components and radial source radii are histogrammed from zero.

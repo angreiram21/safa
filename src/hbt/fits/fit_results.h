@@ -27,9 +27,13 @@ enum class FitObservableFamily {
  */
 enum class FitFailureReason {
     None,                    ///< Fit is fully valid.
+    NotApplicable,           ///< Observable is intentionally not analyzed here.
     EmptyHistogram,          ///< No statistical region exists.
     InsufficientBins,        ///< K is smaller than P + 1.
+    InsufficientStatistics,  ///< Radial mT slice is below the production cut.
     InvalidMomentSeed,       ///< Required data-derived seed is invalid.
+    InvalidGaussianCoreAnchor, ///< Required Gaussian-core anchor is unavailable.
+    NoBasinConsensus,        ///< Fewer than four core starts agree on a basin.
     ObjectiveEvaluation,     ///< Objective could not be evaluated.
     MigradInvalid,           ///< MIGRAD returned an invalid minimum.
     MigradCallLimit,         ///< MIGRAD exhausted its call budget.
@@ -77,6 +81,7 @@ struct NormalizedHistogramBin {
 struct MigradDiagnostic {
     bool attempted;               ///< Whether this start executed MIGRAD.
     bool valid;                   ///< Raw FunctionMinimum::IsValid state.
+    bool valid_covariance;        ///< Returned user state has covariance.
     bool reached_call_limit;      ///< MIGRAD call budget was exhausted.
     bool above_max_edm;           ///< Minimum remained above maximum EDM.
     bool objective_failure;       ///< Returned minimum cannot be evaluated.
@@ -112,6 +117,59 @@ struct FitParameterEstimate {
     double lower_error;  ///< Distance to the lower MINOS endpoint.
     double upper_error;  ///< Distance to the upper MINOS endpoint.
 };
+
+/**
+ * @brief Final external coordinates used to identify one mixed-fit basin.
+ *
+ * Log-radius coordinates make numerical equivalence scale independent. This
+ * structure contains no physical ordering information and is used only to
+ * determine whether independent starts converged to the same solution.
+ */
+struct MixedBasinPoint {
+    double log_core_radius;  ///< Final log(R_core).
+    double log_tail_radius;  ///< Final log(R_tail).
+    double core_fraction;    ///< Final f_core.
+};
+
+/** Numerical same-basin tolerance for each log-radius coordinate. */
+constexpr double kMixedBasinLogRadiusTolerance = 0.01;
+
+/** Numerical same-basin absolute tolerance for f_core. */
+constexpr double kMixedBasinCoreFractionTolerance = 0.01;
+
+/**
+ * @brief Test whether two mixed endpoints represent the same numerical basin.
+ * @param lhs First converged mixed endpoint.
+ * @param rhs Second converged mixed endpoint.
+ * @return true when both log radii and f_core agree within the documented
+ *         production convergence tolerances.
+ *
+ * The comparison is deliberately independent of R_tail/R_core ordering and of
+ * the Gaussian-core anchor. The 0.01 tolerances identify repeated numerical
+ * convergence and are much smaller than the separated basins observed in the
+ * validation study.
+ */
+[[nodiscard]] bool same_mixed_basin(
+    const MixedBasinPoint& lhs,
+    const MixedBasinPoint& rhs
+);
+
+/**
+ * @brief Return the largest connected same-basin group among valid starts.
+ * @param endpoints Final endpoint for every attempted deterministic start.
+ * @param valid_indices Start indices whose MIGRAD states are publishable.
+ * @return Start indices in the largest connected numerical basin.
+ * @throws std::out_of_range If a valid start index has no matching endpoint.
+ *
+ * Pairwise same-basin agreement defines an undirected graph. Connected
+ * components make grouping deterministic even when tiny numerical differences
+ * are not perfectly transitive. Ties in component size retain the component
+ * reached from the lowest valid start index.
+ */
+[[nodiscard]] std::vector<std::size_t> largest_mixed_basin_group(
+    const std::vector<MixedBasinPoint>& endpoints,
+    const std::vector<std::size_t>& valid_indices
+);
 
 /**
  * @brief Classify the primary failure represented by one MIGRAD diagnostic.
@@ -167,31 +225,39 @@ struct GaussianFitResult {
 /**
  * @brief Result of the three-parameter Gaussian-plus-exponential fit.
  *
- * starts stores deterministic start A at index zero and optional start B at
- * index one. starts_attempted is one or two. selected_start is present only
- * when at least one valid MIGRAD minimum exists. exact_q_tie records equality
- * of two valid objective minima without asserting global optimality.
+ * Five deterministic core-anchored starts are attempted when the Gaussian
+ * core anchor and moment-derived tail seed are available. Every start uses
+ * the same R_core seed from the independently fitted Gaussian core and varies
+ * only R_tail and f_core. `consensus_size` records the largest numerically
+ * equivalent solution group. A physical mixed result is published only when
+ * at least four of the five starts agree on the same basin. Q is used only to
+ * select the best numerical realization inside that consensus basin.
  */
 struct MixedFitResult {
-    bool fully_valid;                 ///< Selected fit and all MINOS are valid.
+    /// Number of deterministic Gaussian-core-anchored MIGRAD starts.
+    static constexpr std::size_t kCoreStartCount = 5U;
+
+    bool fully_valid;                 ///< Consensus fit and all MINOS are valid.
     FitFailureReason failure_reason;  ///< Primary invalidity cause, if any.
-    std::array<MigradDiagnostic, 2U> starts; ///< Independent start diagnostics.
-    std::size_t starts_attempted;     ///< Number of deterministic starts used.
-    std::optional<std::size_t> selected_start; ///< Zero-based selected start.
-    bool exact_q_tie;                 ///< Valid starts had exactly equal Q_min.
-    bool tail_below_core;             ///< R_tail < R_core diagnostic.
-    MigradDiagnostic selected_migrad; ///< Selected MIGRAD diagnostic.
+    /// Diagnostics for the five deterministic Gaussian-core-anchored starts.
+    std::array<MigradDiagnostic, kCoreStartCount> starts;
+    std::size_t starts_attempted;     ///< Number of core starts actually run.
+    std::size_t valid_starts;         ///< Starts with valid evaluable MIGRAD state.
+    std::size_t consensus_size;       ///< Starts assigned to selected basin.
+    /// Zero-based member of the consensus basin selected for MINOS.
+    std::optional<std::size_t> selected_core_start;
+    MigradDiagnostic selected_migrad; ///< Selected consensus MIGRAD diagnostic.
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.
-    std::optional<double> q_min;       ///< Best valid minimum found.
+    std::optional<double> q_min;       ///< Minimum Q inside consensus basin.
     /// Physical core radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_radius;
     /// Physical tail radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> tail_radius;
     /// Physical core fraction and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_fraction;
-    /// Valid fitted bin densities; empty when the fit is not fully valid.
+    /// Valid fitted bin densities over the full mixed region.
     std::vector<double> fitted_pdf;
 };
 
@@ -199,12 +265,15 @@ struct MixedFitResult {
  * @brief Complete derived result for one logical OSL or radial histogram.
  */
 struct ShapeHistogramResult {
-    std::optional<StatisticalRegion> region; ///< Selected contiguous region.
-    std::uint64_t selected_count;            ///< N over the selected region.
-    /// Final normalized distribution, produced after both fit attempts.
+    /// Full contiguous region retained for normalization and the mixed model.
+    std::optional<StatisticalRegion> region;
+    /// Compact region used only by the pure Gaussian core fit.
+    std::optional<StatisticalRegion> gaussian_core_region;
+    std::uint64_t selected_count;            ///< N over the full region.
+    /// Final normalized distribution over the full statistical region.
     std::vector<NormalizedHistogramBin> normalized_bins;
-    GaussianFitResult gaussian;              ///< Independent pure Gaussian fit.
-    MixedFitResult mixed;                    ///< Independent mixed-model fit.
+    GaussianFitResult gaussian;              ///< Truncated pure Gaussian core fit.
+    MixedFitResult mixed;                    ///< Full-range mixed-model fit.
 };
 
 /**

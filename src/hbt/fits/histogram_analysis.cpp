@@ -24,7 +24,7 @@ namespace {
  * @return Diagnostic with attempted == false and no numerical minimum.
  */
 MigradDiagnostic unattempted_migrad() {
-    return {false, false, false, false, false, 0, std::nullopt};
+    return {false, false, false, false, false, false, 0, std::nullopt};
 }
 
 /**
@@ -36,13 +36,14 @@ MinosDiagnostic unattempted_minos() {
 }
 
 /**
- * @brief Build an explicit empty-histogram Gaussian fit result.
- * @return Invalid result that carries no fabricated numerical values.
+ * @brief Build an explicit invalid Gaussian fit result without fabricated data.
+ * @param reason Stable reason explaining why no Gaussian result is published.
+ * @return Invalid result carrying only diagnostics and @p reason.
  */
-GaussianFitResult empty_gaussian_result() {
+GaussianFitResult invalid_gaussian_result(FitFailureReason reason) {
     return {
         false,
-        FitFailureReason::EmptyHistogram,
+        reason,
         unattempted_migrad(),
         unattempted_minos(),
         std::nullopt,
@@ -52,19 +53,23 @@ GaussianFitResult empty_gaussian_result() {
 }
 
 /**
- * @brief Build an explicit empty-histogram mixed fit result.
- * @return Invalid result that carries no fabricated numerical values.
+ * @brief Build an explicit invalid mixed fit result without fabricated data.
+ * @param reason Stable reason explaining why no mixed result is published.
+ * @return Invalid result carrying only diagnostics and @p reason.
  */
-MixedFitResult empty_mixed_result() {
+MixedFitResult invalid_mixed_result(FitFailureReason reason) {
     const MigradDiagnostic empty = unattempted_migrad();
+    const std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{
+        empty, empty, empty, empty, empty
+    };
     return {
         false,
-        FitFailureReason::EmptyHistogram,
-        {empty, empty},
+        reason,
+        starts,
+        0U,
+        0U,
         0U,
         std::nullopt,
-        false,
-        false,
         empty,
         unattempted_minos(),
         unattempted_minos(),
@@ -78,28 +83,84 @@ MixedFitResult empty_mixed_result() {
 }
 
 /**
+ * @brief Build a derived shape placeholder for an intentionally skipped fit.
+ * @return Empty, explicitly not-applicable Gaussian and mixed result.
+ *
+ * The approved production contract treats OSL as global-only. Raw kinetic
+ * slice histograms may still exist because the accumulation layout is shared,
+ * but no OSL slice likelihood is evaluated.
+ */
+ShapeHistogramResult not_applicable_shape_result() {
+    return {
+        std::nullopt,
+        std::nullopt,
+        0U,
+        {},
+        invalid_gaussian_result(FitFailureReason::NotApplicable),
+        invalid_mixed_result(FitFailureReason::NotApplicable)
+    };
+}
+
+/** Production quality cut validated for radial mT slices in the contract. */
+constexpr std::uint64_t kMinimumRadialSliceSelectedCount = 10000U;
+
+/**
  * @brief Analyze one OSL or radial logical histogram without normalization.
  * @param family OSL or radial physical model family.
  * @param bins Slot-major raw uint64_t histogram storage.
  * @param offset First raw counter for this logical histogram.
  * @param binning Validated uniform binning.
- * @return Selected region plus independent Gaussian and mixed fit results.
+ * @param apply_radial_slice_quality_cut Whether the provisional radial kinetic
+ *        slice threshold N_selected >= 10000 is required for this histogram.
+ * @return Full/core regions plus independent Gaussian and mixed fit results.
  */
 ShapeHistogramResult analyze_shape_histogram(
     FitObservableFamily family,
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
-    const HistogramBinningConfig& binning
+    const HistogramBinningConfig& binning,
+    bool apply_radial_slice_quality_cut
 ) {
     const std::optional<StatisticalRegion> region =
         select_shape_region(bins, offset, binning);
     if (!region.has_value()) {
         return {
             std::nullopt,
+            std::nullopt,
             0U,
             {},
-            empty_gaussian_result(),
-            empty_mixed_result()
+            invalid_gaussian_result(FitFailureReason::EmptyHistogram),
+            invalid_mixed_result(FitFailureReason::EmptyHistogram)
+        };
+    }
+
+    const std::optional<StatisticalRegion> core_region =
+        select_gaussian_core_region(
+            family,
+            bins,
+            offset,
+            binning,
+            region.value()
+        );
+    if (apply_radial_slice_quality_cut &&
+        region->selected_count < kMinimumRadialSliceSelectedCount) {
+        return {
+            region,
+            core_region,
+            region->selected_count,
+            {},
+            invalid_gaussian_result(FitFailureReason::InsufficientStatistics),
+            invalid_mixed_result(FitFailureReason::InsufficientStatistics)
+        };
+    }
+    if (!core_region.has_value()) {
+        return {
+            region,
+            std::nullopt,
+            region->selected_count,
+            {},
+            invalid_gaussian_result(FitFailureReason::InsufficientBins),
+            invalid_mixed_result(FitFailureReason::InvalidGaussianCoreAnchor)
         };
     }
 
@@ -108,7 +169,7 @@ ShapeHistogramResult analyze_shape_histogram(
         bins,
         offset,
         binning,
-        region.value()
+        core_region.value()
     );
     MixedFitResult mixed = fit_mixed_model(
         family,
@@ -120,6 +181,7 @@ ShapeHistogramResult analyze_shape_histogram(
     );
     return {
         region,
+        core_region,
         region->selected_count,
         {},
         std::move(gaussian),
@@ -164,27 +226,37 @@ DeltaTHistogramResult analyze_delta_t_histogram(
  * @brief Analyze all nine logical histograms of one raw destination.
  * @param config Validated histogram binning metadata.
  * @param raw Immutable nine-histogram raw state.
+ * @param kinetic_slice true only for a kT/mT slice destination. OSL fitting is
+ *        skipped for such destinations because OSL is global-only.
+ * @param apply_radial_mt_quality_cut Whether the provisional N_selected >=
+ *        10000 quality cut applies to this one-dimensional radial mT slice.
  * @return Derived state with fits/moments complete and normalization empty.
  */
 DerivedHistogramSet analyze_histogram_set(
     const HBTHistogramConfig& config,
-    const RawHistogramSet& raw
+    const RawHistogramSet& raw,
+    bool kinetic_slice,
+    bool apply_radial_mt_quality_cut
 ) {
     DerivedHistogramSet result{};
     for (std::size_t slot = 0U; slot < result.osl.size(); ++slot) {
-        result.osl[slot] = analyze_shape_histogram(
-            FitObservableFamily::OSL,
-            raw.osl.bins,
-            slot * config.osl.nbins,
-            config.osl
-        );
+        result.osl[slot] = kinetic_slice
+            ? not_applicable_shape_result()
+            : analyze_shape_histogram(
+                FitObservableFamily::OSL,
+                raw.osl.bins,
+                slot * config.osl.nbins,
+                config.osl,
+                false
+            );
     }
     for (std::size_t slot = 0U; slot < result.radial.size(); ++slot) {
         result.radial[slot] = analyze_shape_histogram(
             FitObservableFamily::Radial,
             raw.radial.bins,
             slot * config.radial.nbins,
-            config.radial
+            config.radial,
+            apply_radial_mt_quality_cut
         );
     }
     for (std::size_t slot = 0U; slot < result.delta_t.size(); ++slot) {
@@ -261,8 +333,10 @@ std::size_t region_bin_count(
  */
 void require_shape_result(const ShapeHistogramResult& result) {
     const std::size_t count = region_bin_count(result.region);
+    const std::size_t core_count = region_bin_count(result.gaussian_core_region);
     if (!result.region.has_value()) {
-        if (result.selected_count != 0U || !result.normalized_bins.empty()) {
+        if (result.selected_count != 0U || !result.normalized_bins.empty() ||
+            result.gaussian_core_region.has_value()) {
             throw std::logic_error(
                 "HBT analysis state: empty shape result has derived bin data"
             );
@@ -278,7 +352,8 @@ void require_shape_result(const ShapeHistogramResult& result) {
     if (result.gaussian.fully_valid) {
         if (!result.gaussian.radius.has_value() ||
             !result.gaussian.q_min.has_value() ||
-            result.gaussian.fitted_pdf.size() != count) {
+            !result.gaussian_core_region.has_value() ||
+            result.gaussian.fitted_pdf.size() != core_count) {
             throw std::logic_error(
                 "HBT analysis state: valid Gaussian fit is incomplete"
             );
@@ -295,7 +370,8 @@ void require_shape_result(const ShapeHistogramResult& result) {
             !result.mixed.tail_radius.has_value() ||
             !result.mixed.core_fraction.has_value() ||
             !result.mixed.q_min.has_value() ||
-            !result.mixed.selected_start.has_value() ||
+            !result.mixed.selected_core_start.has_value() ||
+            result.mixed.consensus_size < 4U ||
             result.mixed.fitted_pdf.size() != count) {
             throw std::logic_error(
                 "HBT analysis state: valid mixed fit is incomplete"
@@ -387,15 +463,22 @@ HistogramAnalysisState analyze_histograms(
                 derived_product.origins[origin];
             derived_origin.global = analyze_histogram_set(
                 config.histogram_config,
-                raw_origin.global
+                raw_origin.global,
+                false,
+                false
             );
             derived_origin.slices.resize(raw_origin.slices.size());
+            const bool apply_radial_mt_quality_cut =
+                config.pair_slicing.mt.enabled &&
+                !config.pair_slicing.kt.enabled;
             for (std::size_t slice = 0U;
                  slice < raw_origin.slices.size();
                  ++slice) {
                 derived_origin.slices[slice] = analyze_histogram_set(
                     config.histogram_config,
-                    raw_origin.slices[slice]
+                    raw_origin.slices[slice],
+                    true,
+                    apply_radial_mt_quality_cut
                 );
             }
         }
