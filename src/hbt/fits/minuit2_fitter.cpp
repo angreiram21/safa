@@ -845,13 +845,25 @@ MixedFitResult fit_mixed_model(
         return result;
     }
 
-    std::size_t selected_index = valid_indices.front();
-    for (const std::size_t valid_index : valid_indices) {
-        if (outcomes[valid_index].diagnostic.q_min.value() <
-            outcomes[selected_index].diagnostic.q_min.value()) {
-            selected_index = valid_index;
-        }
+    std::vector<MixedBasinPoint> endpoints;
+    std::vector<double> q_values;
+    endpoints.reserve(outcomes.size());
+    q_values.reserve(outcomes.size());
+    for (const MixedStartOutcome& outcome : outcomes) {
+        endpoints.push_back(outcome.endpoint);
+        q_values.push_back(
+            outcome.diagnostic.q_min.value_or(
+                std::numeric_limits<double>::infinity()
+            )
+        );
     }
+    const std::size_t selected_index =
+        select_mixed_start_by_half_maximum_basin(
+            endpoints,
+            q_values,
+            valid_indices,
+            half_maximum_seed
+        );
     result.selected_core_start = selected_index;
     result.selected_migrad = outcomes[selected_index].diagnostic;
     result.q_min = result.selected_migrad.q_min;

@@ -929,11 +929,16 @@ of `R_core = {R_G, 0.5 R_HM, R_HM, 2 R_HM}`,
 Gaussian fit using the same estimator. Poisson, Neyman and Pearson therefore
 remain completely independent.
 
-Every numerically valid mixed MIGRAD minimum competes directly and the smallest
-objective value found is selected, even if only one start reaches that basin.
-Numerical basin multiplicity is retained only as a stability diagnostic and is
-not an acceptance veto. MINOS runs only on the selected minimum. Poisson remains
-the default estimator used by backward-compatible plotting columns.
+Numerically valid mixed MIGRAD minima are first grouped into numerical basins
+using the final `(log(R_core), log(R_tail), f_core)` coordinates. The physical
+Gaussian-core basin is identified by the observed half-maximum scale: for each
+basin, the arithmetic mean of `log(R_core)` is compared with `log(R_HM)`, and
+the basin minimizing `|mean(log(R_core)) - log(R_HM)|` is selected. This is a
+relative-scale criterion and imposes no ordering between `R_core` and `R_tail`.
+Within that selected basin, the valid minimum with the smallest objective value
+is used for MINOS. Basin multiplicity is retained only as a stability diagnostic
+and is not an acceptance veto. Poisson remains the default estimator used by
+backward-compatible plotting columns.
 
 The one-dimensional radial-mT count-threshold machinery is retained, but its
 current value is `N_selected >= 0`, so no non-empty slice is vetoed by this
@@ -1398,8 +1403,9 @@ The standard CTest suite contains 51 tests covering:
   semantics and explicit probability-normalization validation;
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
-  select the smallest valid objective, retain basin multiplicity diagnostically,
-  and validate MIGRAD/covariance/MINOS states and asymmetric physical errors;
+  identify the R_HM-anchored Gaussian-core basin, select the smallest objective
+  inside that basin, retain basin multiplicity diagnostically, and validate
+  MIGRAD/covariance/MINOS states and asymmetric physical errors;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`
   traceability metadata, fit/statistics CSVs and omission of invalid fit curves;

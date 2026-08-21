@@ -237,6 +237,42 @@ bool verify_mixed_basin_grouping() {
 }
 
 /**
+ * @brief Verify R_HM chooses the physical basin before q ranks its minima.
+ * @return true when a lower-q remote basin loses to the R_HM-anchored basin
+ *         and the lowest q inside the anchored basin is selected.
+ */
+bool verify_half_maximum_anchored_mixed_selection() {
+    const std::vector<hbt::MixedBasinPoint> endpoints{
+        {std::log(4.00), std::log(6.00), 0.650},
+        {std::log(4.02), std::log(6.03), 0.646},
+        {std::log(14.00), std::log(3.50), 0.080},
+        {std::log(14.04), std::log(3.52), 0.084},
+        {std::log(13.96), std::log(3.48), 0.077}
+    };
+    const std::vector<double> q_values{120.0, 110.0, 90.0, 80.0, 70.0};
+    const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U, 4U};
+
+    const std::size_t selected =
+        hbt::select_mixed_start_by_half_maximum_basin(
+            endpoints,
+            q_values,
+            valid_indices,
+            4.10
+        );
+    if (selected != 1U) {
+        return fail(
+            "R_HM-anchored basin selection preferred a remote lower-q basin"
+        );
+    }
+    if (!(q_values[4U] < q_values[selected])) {
+        return fail(
+            "R_HM basin test does not contain the intended lower global q"
+        );
+    }
+    return true;
+}
+
+/**
  * @brief Verify empty shape and delta-t histograms have no selected region.
  * @return true when an all-zero histogram remains explicitly regionless.
  */
@@ -378,6 +414,7 @@ int main() {
         !verify_radial_half_maximum_radius_seed() ||
         !verify_gaussian_core_fallback() ||
         !verify_mixed_basin_grouping() ||
+        !verify_half_maximum_anchored_mixed_selection() ||
         !verify_empty_regions() || !verify_delta_t_region() ||
         !verify_normalization() || !verify_delta_t_statistics() ||
         !verify_invalid_delta_t_variance() ||

@@ -186,6 +186,36 @@ constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 );
 
 /**
+ * @brief Select the mixed start from the basin anchored to the observed core width.
+ * @param endpoints Final endpoint for every attempted deterministic start.
+ * @param q_values Objective value associated with every attempted start.
+ * @param valid_indices Start indices whose MIGRAD states are numerically valid.
+ * @param half_maximum_radius R_HM obtained from the histogram FWHM and converted
+ *        to the Gaussian model-radius convention for this observable family.
+ * @return Start index with the smallest q inside the R_HM-anchored basin.
+ * @throws std::invalid_argument If array sizes differ, R_HM is non-finite or
+ *         non-positive, no valid start is supplied, or a valid q is non-finite.
+ * @throws std::out_of_range If a valid start index is outside the input arrays.
+ *
+ * Valid endpoints are partitioned into connected numerical basins using
+ * same_mixed_basin(). Each basin is represented by the arithmetic mean of
+ * log(R_core), equivalently by its geometric-mean R_core scale. The physical
+ * Gaussian-core basin is the one minimizing
+ * |mean(log(R_core)) - log(R_HM)| = |log(R_core,geom / R_HM)|.
+ * This identifies the Gaussian component by the observed half-maximum core
+ * width, without imposing any ordering between R_core and R_tail and without
+ * using basin multiplicity as an acceptance criterion. After the basin is
+ * fixed, q ranks only the minima inside that basin. Exact distance ties are
+ * broken by the lower basin q and then the lowest start index.
+ */
+[[nodiscard]] std::size_t select_mixed_start_by_half_maximum_basin(
+    const std::vector<MixedBasinPoint>& endpoints,
+    const std::vector<double>& q_values,
+    const std::vector<std::size_t>& valid_indices,
+    double half_maximum_radius
+);
+
+/**
  * @brief Classify the primary failure represented by one MIGRAD diagnostic.
  * @param diagnostic Completed stable MIGRAD diagnostic.
  * @return FitFailureReason::None when the minimum is fully valid.
@@ -263,11 +293,13 @@ struct GaussianFitResult {
  *
  * R_G always comes from the pure-Gaussian fit using the same estimator. Start
  * indices use core-major, then tail-major, then fraction-major ordering:
- * `index = (core_index * 3 + tail_index) * 3 + fraction_index`. Every
- * numerically valid MIGRAD solution competes globally and the one with the
- * smallest objective is selected for MINOS, even when reached by only one
- * start. `consensus_size` is retained only as a diagnostic: it is the size of
- * the same-basin group containing the selected minimum and never vetoes it.
+ * `index = (core_index * 3 + tail_index) * 3 + fraction_index`. Valid MIGRAD
+ * endpoints are grouped into numerical basins. The selected basin is the one
+ * whose geometric-mean R_core is closest to R_HM in logarithmic relative
+ * scale, equivalently the basin minimizing
+ * |mean(log(R_core)) - log(R_HM)|. The valid minimum with the smallest q
+ * inside that basin is then selected for MINOS. `consensus_size` is retained
+ * only as diagnostic basin multiplicity and never acts as an acceptance veto.
  */
 struct MixedFitResult {
     /** Number of deterministic Cartesian-product mixed MIGRAD starts. */
@@ -281,13 +313,13 @@ struct MixedFitResult {
     std::size_t starts_attempted;      ///< Number of starts actually run.
     std::size_t valid_starts;          ///< Starts with valid evaluable MIGRAD state.
     std::size_t consensus_size;        ///< Same-basin multiplicity of selected minimum.
-    /// Zero-based start selected solely because it has the smallest valid q.
+    /// Zero-based lowest-q start inside the R_HM-anchored numerical basin.
     std::optional<std::size_t> selected_core_start;
     MigradDiagnostic selected_migrad;  ///< Selected minimum MIGRAD diagnostic.
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.
-    std::optional<double> q_min;        ///< Smallest valid estimator objective found.
+    std::optional<double> q_min;        ///< Selected basin minimum objective value.
     /// Physical core radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_radius;
     /// Physical tail radius and asymmetric MINOS errors when fully valid.

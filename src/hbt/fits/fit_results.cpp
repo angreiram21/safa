@@ -5,29 +5,27 @@
 
 #include "hbt/fits/fit_results.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace hbt {
+namespace {
 
-bool same_mixed_basin(
-    const MixedBasinPoint& lhs,
-    const MixedBasinPoint& rhs
-) {
-    return std::fabs(lhs.log_core_radius - rhs.log_core_radius) <=
-            kMixedBasinLogRadiusTolerance &&
-        std::fabs(lhs.log_tail_radius - rhs.log_tail_radius) <=
-            kMixedBasinLogRadiusTolerance &&
-        std::fabs(lhs.core_fraction - rhs.core_fraction) <=
-            kMixedBasinCoreFractionTolerance;
-}
-
-std::vector<std::size_t> largest_mixed_basin_group(
+/**
+ * @brief Partition valid mixed endpoints into connected numerical basins.
+ * @param endpoints Final endpoint for every attempted start.
+ * @param valid_indices Indices included in the numerical-basin graph.
+ * @return Connected components in deterministic valid-index traversal order.
+ * @throws std::out_of_range If a valid start index has no matching endpoint.
+ */
+std::vector<std::vector<std::size_t>> mixed_basin_components(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<std::size_t>& valid_indices
 ) {
     std::vector<bool> visited(endpoints.size(), false);
-    std::vector<std::size_t> best;
+    std::vector<std::vector<std::size_t>> components;
     for (const std::size_t seed : valid_indices) {
         if (seed >= endpoints.size()) {
             throw std::out_of_range(
@@ -59,11 +57,120 @@ std::vector<std::size_t> largest_mixed_basin_group(
                 }
             }
         }
+        components.push_back(std::move(component));
+    }
+    return components;
+}
+
+}  // namespace
+
+bool same_mixed_basin(
+    const MixedBasinPoint& lhs,
+    const MixedBasinPoint& rhs
+) {
+    return std::fabs(lhs.log_core_radius - rhs.log_core_radius) <=
+            kMixedBasinLogRadiusTolerance &&
+        std::fabs(lhs.log_tail_radius - rhs.log_tail_radius) <=
+            kMixedBasinLogRadiusTolerance &&
+        std::fabs(lhs.core_fraction - rhs.core_fraction) <=
+            kMixedBasinCoreFractionTolerance;
+}
+
+std::vector<std::size_t> largest_mixed_basin_group(
+    const std::vector<MixedBasinPoint>& endpoints,
+    const std::vector<std::size_t>& valid_indices
+) {
+    const auto components = mixed_basin_components(endpoints, valid_indices);
+    std::vector<std::size_t> best;
+    for (const auto& component : components) {
         if (component.size() > best.size()) {
-            best = std::move(component);
+            best = component;
         }
     }
     return best;
+}
+
+std::size_t select_mixed_start_by_half_maximum_basin(
+    const std::vector<MixedBasinPoint>& endpoints,
+    const std::vector<double>& q_values,
+    const std::vector<std::size_t>& valid_indices,
+    double half_maximum_radius
+) {
+    if (endpoints.size() != q_values.size()) {
+        throw std::invalid_argument(
+            "mixed basin selection: endpoint and q arrays differ in size"
+        );
+    }
+    if (!std::isfinite(half_maximum_radius) || half_maximum_radius <= 0.0) {
+        throw std::invalid_argument(
+            "mixed basin selection: R_HM must be finite and positive"
+        );
+    }
+    if (valid_indices.empty()) {
+        throw std::invalid_argument(
+            "mixed basin selection: at least one valid start is required"
+        );
+    }
+
+    for (const std::size_t index : valid_indices) {
+        if (index >= endpoints.size()) {
+            throw std::out_of_range(
+                "mixed basin selection: valid start index is out of range"
+            );
+        }
+        if (!std::isfinite(q_values[index])) {
+            throw std::invalid_argument(
+                "mixed basin selection: valid start q must be finite"
+            );
+        }
+    }
+
+    const auto components = mixed_basin_components(endpoints, valid_indices);
+    const double log_half_maximum = std::log(half_maximum_radius);
+    std::size_t selected_component = 0U;
+    double selected_distance = std::numeric_limits<double>::infinity();
+    double selected_component_q = std::numeric_limits<double>::infinity();
+    std::size_t selected_component_index =
+        std::numeric_limits<std::size_t>::max();
+
+    for (std::size_t component_index = 0U;
+         component_index < components.size();
+         ++component_index) {
+        const auto& component = components[component_index];
+        double log_core_sum = 0.0;
+        double component_q = std::numeric_limits<double>::infinity();
+        std::size_t component_lowest_index =
+            std::numeric_limits<std::size_t>::max();
+        for (const std::size_t index : component) {
+            log_core_sum += endpoints[index].log_core_radius;
+            component_q = std::min(component_q, q_values[index]);
+            component_lowest_index = std::min(component_lowest_index, index);
+        }
+        const double mean_log_core =
+            log_core_sum / static_cast<double>(component.size());
+        const double distance = std::fabs(mean_log_core - log_half_maximum);
+        if (distance < selected_distance ||
+            (distance == selected_distance &&
+             (component_q < selected_component_q ||
+              (component_q == selected_component_q &&
+               component_lowest_index < selected_component_index)))) {
+            selected_component = component_index;
+            selected_distance = distance;
+            selected_component_q = component_q;
+            selected_component_index = component_lowest_index;
+        }
+    }
+
+    const auto& basin = components[selected_component];
+    std::size_t selected_start = basin.front();
+    for (const std::size_t index : basin) {
+        if (q_values[index] < q_values[selected_start] ||
+            (q_values[index] == q_values[selected_start] &&
+             index < selected_start)) {
+            selected_start = index;
+        }
+    }
+    return selected_start;
 }
 
 FitFailureReason fit_failure_from_migrad(

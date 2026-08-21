@@ -111,7 +111,7 @@ bool verify_gaussian_migrad_and_minos() {
 
 /**
  * @brief Verify estimator-local Gaussian starts and 36-start mixed selection.
- * @return true when each estimator selects its smallest valid q and passes MINOS.
+ * @return true when each estimator applies its documented selection and MINOS.
  */
 bool verify_mixed_multistart_and_minos() {
     const hbt::HistogramBinningConfig binning{20U, 0.0, 10.0, 2.0};
@@ -189,15 +189,19 @@ bool verify_mixed_multistart_and_minos() {
                 return fail("mixed estimator did not attempt all 36 starts");
             }
         }
-        double best = std::numeric_limits<double>::infinity();
-        for (const hbt::MigradDiagnostic& start : mixed.starts) {
-            if (hbt::fit_failure_from_migrad(start) == hbt::FitFailureReason::None) {
-                best = std::min(best, start.q_min.value());
-            }
-        }
-        if (!mixed.q_min.has_value() ||
-            std::fabs(mixed.q_min.value() - best) > 1.0e-10) {
-            return fail("mixed estimator did not select the smallest valid q");
+        const std::size_t selected_index = mixed.selected_core_start.value();
+        if (selected_index >= hbt::MixedFitResult::kCoreStartCount ||
+            hbt::fit_failure_from_migrad(mixed.starts[selected_index]) !=
+                hbt::FitFailureReason::None ||
+            !mixed.q_min.has_value() ||
+            !mixed.starts[selected_index].q_min.has_value() ||
+            std::fabs(
+                mixed.q_min.value() - mixed.starts[selected_index].q_min.value()
+            ) > 1.0e-10 ||
+            mixed.consensus_size == 0U) {
+            return fail(
+                "mixed estimator did not preserve its R_HM-basin selection"
+            );
         }
         if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
             !mixed.tail_radius.has_value() ||

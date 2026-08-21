@@ -60,10 +60,12 @@ namespace hbt {
  *
  * The deterministic Cartesian product is
  * R_core={R_G,0.5R_HM,R_HM,2R_HM},
- * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Every valid
- * MIGRAD minimum competes directly; the smallest q is selected for MINOS even
- * if only one start reaches its basin. Basin multiplicity is diagnostic only.
- * No ordering of R_core and R_tail is imposed.
+ * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
+ * grouped into numerical basins. The basin whose geometric-mean R_core is
+ * closest to R_HM in logarithmic relative scale is identified as the physical
+ * Gaussian-core basin; the smallest q inside that basin is selected for MINOS.
+ * Basin multiplicity is diagnostic only, and no ordering of R_core and R_tail
+ * is imposed.
  */
 [[nodiscard]] MixedFitResult fit_mixed_model(
     FitObservableFamily family,
