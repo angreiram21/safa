@@ -179,6 +179,68 @@ bool verify_radial_half_maximum_radius_seed() {
     return true;
 }
 
+
+/**
+ * @brief Verify OSL R_HM uses the non-increasing PAVA envelope.
+ * @return true when an upward recrossing is pooled before locating half height.
+ */
+bool verify_osl_half_maximum_pava_recrossing() {
+    const hbt::HistogramBinningConfig binning{6U, 0.0, 6.0, 1.0};
+    const std::vector<std::uint64_t> bins{100U, 80U, 90U, 40U, 20U, 0U};
+    const hbt::StatisticalRegion region{0U, 4U, 330U};
+    const std::optional<double> seed = hbt::half_maximum_radius_seed(
+        hbt::FitObservableFamily::OSL,
+        bins,
+        0U,
+        binning,
+        region
+    );
+
+    // PAVA pools 80 and 90 to 85. Half height is 50, so the crossing is
+    // interpolated between centers 2.5 (85) and 3.5 (40).
+    const double half_crossing = 2.5 + (35.0 / 45.0);
+    const double expected =
+        half_crossing / (2.0 * std::sqrt(std::log(2.0)));
+    if (!seed.has_value() || !close(seed.value(), expected)) {
+        return fail("OSL half-maximum seed ignored its PAVA envelope");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify radial R_HM ignores an isolated first-bin maximum.
+ * @return true when unimodal PAVA preserves the broad interior physical peak.
+ *
+ * The first bin is deliberately one count above the broad peak. A raw-global-
+ * maximum algorithm would place the radial mode at the left endpoint and fail
+ * because no left half-height crossing exists. Least-squares unimodal PAVA
+ * pools the isolated endpoint excess into the rising branch and selects the
+ * interior peak instead.
+ */
+bool verify_radial_half_maximum_rejects_endpoint_spike() {
+    const hbt::HistogramBinningConfig binning{11U, 0.0, 11.0, 1.0};
+    const std::vector<std::uint64_t> bins{
+        101U, 5U, 20U, 50U, 80U, 100U, 80U, 50U, 20U, 5U, 0U
+    };
+    const hbt::StatisticalRegion region{0U, 9U, 511U};
+    const std::optional<double> seed = hbt::half_maximum_radius_seed(
+        hbt::FitObservableFamily::Radial,
+        bins,
+        0U,
+        binning,
+        region
+    );
+
+    constexpr double radial_fwhm_over_radius = 2.3098847205021675;
+    // The unimodal regression is [42,42,42,50,80,100,80,50,20,5].
+    // Its half-height crossings are therefore 3.5 and 7.5.
+    const double expected = 4.0 / radial_fwhm_over_radius;
+    if (!seed.has_value() || !close(seed.value(), expected)) {
+        return fail("radial half-maximum seed followed an endpoint spike");
+    }
+    return true;
+}
+
 /**
  * @brief Verify the core selector falls back to the full safety region.
  * @return true when no threshold crossing invents an earlier cut.
@@ -412,6 +474,8 @@ int main() {
         !verify_osl_gaussian_core_region() ||
         !verify_osl_half_maximum_radius_seed() ||
         !verify_radial_half_maximum_radius_seed() ||
+        !verify_osl_half_maximum_pava_recrossing() ||
+        !verify_radial_half_maximum_rejects_endpoint_spike() ||
         !verify_gaussian_core_fallback() ||
         !verify_mixed_basin_grouping() ||
         !verify_half_maximum_anchored_mixed_selection() ||

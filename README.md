@@ -915,10 +915,15 @@ scientific epsilon, post-hoc renormalization, or free fit amplitude.
 The pure Gaussian fit has one physical parameter, `R > 0`, represented through
 a log-radius parameter. Poisson, Neyman and Pearson are fitted independently on
 the same compact 10%-core region. Each estimator runs two deterministic starts:
-the moment-derived Gaussian radius and `R_HM`, obtained by linearly interpolating
-the histogram half-maximum crossing(s) and converting the measured FWHM to the
-model radius. Among valid MIGRAD minima the smallest objective value is selected
-for MINOS. The mixed model remains fitted over the full statistical region.
+the moment-derived Gaussian radius and `R_HM`. `R_HM` is obtained from a
+shape-constrained PAVA estimate before linearly interpolating the half-maximum
+crossing(s): OSL uses a non-increasing envelope from the origin, while radial
+histograms use a least-squares unimodal regression with a non-decreasing branch
+followed by a non-increasing branch. This prevents isolated radial endpoint bins
+from defining the core mode. The resulting FWHM is converted to the model
+radius; raw counts, `N_selected`, and fit regions are unchanged. Among valid
+MIGRAD minima the smallest objective value is selected for MINOS. The mixed
+model remains fitted over the full statistical region.
 
 The mixed model fits `R_core > 0`, `R_tail > 0` and `f_core` in `[0,1]`. No
 ordering between `R_core` and `R_tail` is imposed or used as a validity

@@ -81,11 +81,17 @@ namespace hbt {
  * @throws std::out_of_range If the logical histogram or region is unavailable.
  *
  * The half-height locations are linearly interpolated between neighboring bin
- * centers. OSL histograms contain |x|, so the observed right half-maximum
- * location is mirrored about zero to obtain FWHM and
- * R = FWHM/(4 sqrt(ln 2)). Radial histograms use both measured crossings around
- * the non-zero mode and R = FWHM/2.3098847205021675, the exact numerical width
- * ratio of r^2 exp[-r^2/(4R^2)]. Raw counts and N_selected are never modified.
+ * centers of a shape-constrained PAVA estimate; raw fit counts are never
+ * replaced by that estimate. OSL histograms contain |x|, so a non-increasing
+ * PAVA envelope is built from the origin, the observed right half-maximum
+ * location is mirrored about zero, and R = FWHM/(4 sqrt(ln 2)). Radial
+ * histograms use the least-squares unimodal PAVA regression: a non-decreasing
+ * branch up to an optimally selected mode followed by a non-increasing branch.
+ * Both radial half-height crossings are taken from that regression and
+ * R = FWHM/2.3098847205021675, the exact numerical width ratio of
+ * r^2 exp[-r^2/(4R^2)]. This prevents an isolated endpoint bin from defining
+ * the radial mode while preserving the broad physical peak. Raw counts,
+ * N_selected, and the regions used by the fits are never modified.
  */
 [[nodiscard]] std::optional<double> half_maximum_radius_seed(
     FitObservableFamily family,

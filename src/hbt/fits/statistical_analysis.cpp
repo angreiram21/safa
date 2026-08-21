@@ -109,21 +109,25 @@ std::pair<std::size_t, std::size_t> modal_plateau(
 }
 
 /**
- * @brief Return non-increasing PAVA block levels for one contiguous interval.
+ * @brief Return monotonic PAVA levels for one contiguous interval.
  * @param bins Flattened raw count storage.
  * @param offset First logical histogram counter.
  * @param first Inclusive first bin to estimate.
  * @param last Inclusive last bin to estimate.
+ * @param nondecreasing true for a non-decreasing estimate, false for a
+ *        non-increasing estimate.
  * @return One monotonic long-double level per input bin.
  *
- * Adjacent blocks are pooled whenever the left block is lower than the right
- * block. Raw counts are never modified; this estimate is only a cut selector.
+ * Adjacent blocks are pooled whenever their fitted means violate the requested
+ * ordering. Raw counts are never modified; the returned levels are a
+ * shape-constrained auxiliary estimate only.
  */
-std::vector<long double> nonincreasing_pava(
+std::vector<long double> monotonic_pava(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     std::size_t first,
-    std::size_t last
+    std::size_t last,
+    bool nondecreasing
 ) {
     struct Block {
         long double sum;
@@ -144,7 +148,10 @@ std::vector<long double> nonincreasing_pava(
                 left.sum / static_cast<long double>(left.count);
             const long double right_mean =
                 right.sum / static_cast<long double>(right.count);
-            if (left_mean >= right_mean) {
+            const bool ordered = nondecreasing
+                ? left_mean <= right_mean
+                : left_mean >= right_mean;
+            if (ordered) {
                 break;
             }
             Block merged{
@@ -166,6 +173,241 @@ std::vector<long double> nonincreasing_pava(
         }
     }
     return levels;
+}
+
+/**
+ * @brief Return non-increasing PAVA levels for one contiguous interval.
+ * @param bins Flattened raw count storage.
+ * @param offset First logical histogram counter.
+ * @param first Inclusive first bin to estimate.
+ * @param last Inclusive last bin to estimate.
+ * @return One non-increasing long-double level per input bin.
+ */
+std::vector<long double> nonincreasing_pava(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    std::size_t first,
+    std::size_t last
+) {
+    return monotonic_pava(bins, offset, first, last, false);
+}
+
+/**
+ * @brief Return non-decreasing PAVA levels for one contiguous interval.
+ * @param bins Flattened raw count storage.
+ * @param offset First logical histogram counter.
+ * @param first Inclusive first bin to estimate.
+ * @param last Inclusive last bin to estimate.
+ * @return One non-decreasing long-double level per input bin.
+ */
+std::vector<long double> nondecreasing_pava(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    std::size_t first,
+    std::size_t last
+) {
+    return monotonic_pava(bins, offset, first, last, true);
+}
+
+/**
+ * @brief Squared-error contribution of one PAVA block.
+ * @param sum Sum of raw counts in the block.
+ * @param sum_squares Sum of squared raw counts in the block.
+ * @param count Number of bins in the block.
+ * @return Least-squares error around the block mean.
+ */
+long double pava_block_squared_error(
+    long double sum,
+    long double sum_squares,
+    std::size_t count
+) {
+    const long double size = static_cast<long double>(count);
+    const long double error = sum_squares - (sum * sum) / size;
+    return error > 0.0L ? error : 0.0L;
+}
+
+/**
+ * @brief Prefix errors of non-decreasing least-squares isotonic regressions.
+ * @param bins Flattened raw count storage.
+ * @param offset First logical histogram counter.
+ * @param first Inclusive first bin.
+ * @param last Inclusive last bin.
+ * @return For each local index i, the PAVA squared error on [first,first+i].
+ *
+ * The PAVA stack is updated incrementally, so all prefix errors are obtained in
+ * linear amortized time rather than by refitting every prefix independently.
+ */
+std::vector<long double> prefix_nondecreasing_pava_errors(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    std::size_t first,
+    std::size_t last
+) {
+    struct Block {
+        long double sum;
+        long double sum_squares;
+        std::size_t count;
+    };
+
+    std::vector<Block> blocks;
+    blocks.reserve(last - first + 1U);
+    std::vector<long double> errors;
+    errors.reserve(last - first + 1U);
+    long double total_error = 0.0L;
+
+    for (std::size_t bin = first; bin <= last; ++bin) {
+        const long double value = static_cast<long double>(bins[offset + bin]);
+        blocks.push_back({value, value * value, 1U});
+        while (blocks.size() >= 2U) {
+            const Block& left = blocks[blocks.size() - 2U];
+            const Block& right = blocks.back();
+            const long double left_mean =
+                left.sum / static_cast<long double>(left.count);
+            const long double right_mean =
+                right.sum / static_cast<long double>(right.count);
+            if (left_mean <= right_mean) {
+                break;
+            }
+
+            total_error -= pava_block_squared_error(
+                left.sum, left.sum_squares, left.count
+            );
+            total_error -= pava_block_squared_error(
+                right.sum, right.sum_squares, right.count
+            );
+            Block merged{
+                left.sum + right.sum,
+                left.sum_squares + right.sum_squares,
+                left.count + right.count
+            };
+            blocks.pop_back();
+            blocks.back() = merged;
+            total_error += pava_block_squared_error(
+                merged.sum, merged.sum_squares, merged.count
+            );
+        }
+        errors.push_back(total_error);
+    }
+    return errors;
+}
+
+/**
+ * @brief Suffix errors of non-increasing least-squares isotonic regressions.
+ * @param bins Flattened raw count storage.
+ * @param offset First logical histogram counter.
+ * @param first Inclusive first bin.
+ * @param last Inclusive last bin.
+ * @return For each local index i, the PAVA squared error on [first+i,last].
+ *
+ * Reading the histogram from right to left converts a non-increasing suffix in
+ * the original order into a non-decreasing prefix in reverse order.
+ */
+std::vector<long double> suffix_nonincreasing_pava_errors(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    std::size_t first,
+    std::size_t last
+) {
+    struct Block {
+        long double sum;
+        long double sum_squares;
+        std::size_t count;
+    };
+
+    const std::size_t size = last - first + 1U;
+    std::vector<Block> blocks;
+    blocks.reserve(size);
+    std::vector<long double> errors(size, 0.0L);
+    long double total_error = 0.0L;
+
+    for (std::size_t reverse = 0U; reverse < size; ++reverse) {
+        const std::size_t bin = last - reverse;
+        const long double value = static_cast<long double>(bins[offset + bin]);
+        blocks.push_back({value, value * value, 1U});
+        while (blocks.size() >= 2U) {
+            const Block& left = blocks[blocks.size() - 2U];
+            const Block& right = blocks.back();
+            const long double left_mean =
+                left.sum / static_cast<long double>(left.count);
+            const long double right_mean =
+                right.sum / static_cast<long double>(right.count);
+            if (left_mean <= right_mean) {
+                break;
+            }
+
+            total_error -= pava_block_squared_error(
+                left.sum, left.sum_squares, left.count
+            );
+            total_error -= pava_block_squared_error(
+                right.sum, right.sum_squares, right.count
+            );
+            Block merged{
+                left.sum + right.sum,
+                left.sum_squares + right.sum_squares,
+                left.count + right.count
+            };
+            blocks.pop_back();
+            blocks.back() = merged;
+            total_error += pava_block_squared_error(
+                merged.sum, merged.sum_squares, merged.count
+            );
+        }
+        errors[bin - first] = total_error;
+    }
+    return errors;
+}
+
+/**
+ * @brief Build the least-squares unimodal PAVA estimate of a radial histogram.
+ * @param bins Flattened raw count storage.
+ * @param offset First logical histogram counter.
+ * @param first Inclusive first bin.
+ * @param last Inclusive last bin.
+ * @return Shape-constrained levels and one optimal modal-bin index.
+ *
+ * Every candidate mode is ranked by the sum of the non-decreasing prefix PAVA
+ * error and the non-increasing suffix PAVA error. Prefix and suffix errors are
+ * accumulated in linear amortized time. The selected mode is then reconstructed
+ * with one PAVA pass on each side. This suppresses isolated endpoint spikes
+ * without smoothing or changing the raw histogram used by the fits.
+ */
+std::pair<std::vector<long double>, std::size_t> unimodal_pava(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    std::size_t first,
+    std::size_t last
+) {
+    const std::vector<long double> prefix_errors =
+        prefix_nondecreasing_pava_errors(bins, offset, first, last);
+    const std::vector<long double> suffix_errors =
+        suffix_nonincreasing_pava_errors(bins, offset, first, last);
+
+    std::size_t mode = first;
+    long double best_error = prefix_errors.front() + suffix_errors.front();
+    for (std::size_t local = 1U; local < prefix_errors.size(); ++local) {
+        const long double error = prefix_errors[local] + suffix_errors[local];
+        if (error < best_error) {
+            best_error = error;
+            mode = first + local;
+        }
+    }
+
+    const std::vector<long double> left =
+        nondecreasing_pava(bins, offset, first, mode);
+    const std::vector<long double> right =
+        nonincreasing_pava(bins, offset, mode, last);
+    const long double raw_mode = static_cast<long double>(bins[offset + mode]);
+
+    std::vector<long double> levels;
+    levels.reserve(last - first + 1U);
+    for (std::size_t local = 0U; local + 1U < left.size(); ++local) {
+        levels.push_back(left[local]);
+    }
+    levels.push_back(raw_mode);
+    for (std::size_t local = 1U; local < right.size(); ++local) {
+        levels.push_back(right[local]);
+    }
+    return {levels, mode};
 }
 
 /**
@@ -345,87 +587,144 @@ std::optional<double> half_maximum_radius_seed(
         );
     }
 
-    const auto mode = modal_plateau(
-        bins,
-        offset,
-        full_region.last_bin + 1U
-    );
-    const long double maximum = static_cast<long double>(
-        bins[offset + mode.first]
-    );
-    if (!(maximum > 0.0L)) {
-        return std::nullopt;
-    }
-    const long double half = 0.5L * maximum;
-
-    std::optional<double> right_crossing;
-    for (std::size_t bin = mode.second + 1U;
-         bin <= full_region.last_bin;
-         ++bin) {
-        const long double right = static_cast<long double>(bins[offset + bin]);
-        if (right <= half) {
-            const std::size_t previous = bin - 1U;
-            right_crossing = interpolate_half_crossing(
-                histogram_bin_center(binning, previous),
-                static_cast<long double>(bins[offset + previous]),
-                histogram_bin_center(binning, bin),
-                right,
-                half
-            );
-            break;
-        }
-    }
-    if (!right_crossing.has_value()) {
-        return std::nullopt;
-    }
-
     constexpr double kSqrtLn2 = 0.83255461115769775635;
     constexpr double kRadialFwhmOverRadius = 2.3098847205021675;
-    double radius = 0.0;
+
     switch (family) {
         case FitObservableFamily::OSL: {
+            const std::vector<long double> levels = nonincreasing_pava(
+                bins,
+                offset,
+                full_region.first_bin,
+                full_region.last_bin
+            );
+            if (levels.empty() || !(levels.front() > 0.0L)) {
+                return std::nullopt;
+            }
+            const long double half = 0.5L * levels.front();
+            std::optional<double> right_crossing;
+            for (std::size_t local = 1U; local < levels.size(); ++local) {
+                if (levels[local] <= half) {
+                    const std::size_t previous = local - 1U;
+                    right_crossing = interpolate_half_crossing(
+                        histogram_bin_center(
+                            binning,
+                            full_region.first_bin + previous
+                        ),
+                        levels[previous],
+                        histogram_bin_center(
+                            binning,
+                            full_region.first_bin + local
+                        ),
+                        levels[local],
+                        half
+                    );
+                    break;
+                }
+            }
+            if (!right_crossing.has_value()) {
+                return std::nullopt;
+            }
+
             // The stored observable is |x|. Mirroring the positive crossing
             // gives FWHM = 2*x_half for a zero-centered Gaussian.
             const double fwhm = 2.0 * right_crossing.value();
-            radius = fwhm / (4.0 * kSqrtLn2);
-            break;
+            const double radius = fwhm / (4.0 * kSqrtLn2);
+            return std::isfinite(radius) && radius > 0.0
+                ? std::optional<double>{radius}
+                : std::nullopt;
         }
         case FitObservableFamily::Radial: {
-            if (mode.first == 0U) {
+            const auto estimate = unimodal_pava(
+                bins,
+                offset,
+                full_region.first_bin,
+                full_region.last_bin
+            );
+            const std::vector<long double>& levels = estimate.first;
+            if (levels.empty()) {
                 return std::nullopt;
             }
+            const std::size_t mode_local =
+                estimate.second - full_region.first_bin;
+            if (mode_local >= levels.size() || !(levels[mode_local] > 0.0L)) {
+                return std::nullopt;
+            }
+
+            const long double maximum = levels[mode_local];
+            const long double half = 0.5L * maximum;
+            std::size_t mode_first = mode_local;
+            while (mode_first > 0U &&
+                   levels[mode_first - 1U] == maximum) {
+                --mode_first;
+            }
+            std::size_t mode_last = mode_local;
+            while (mode_last + 1U < levels.size() &&
+                   levels[mode_last + 1U] == maximum) {
+                ++mode_last;
+            }
+            if (mode_first == 0U) {
+                return std::nullopt;
+            }
+
             std::optional<double> left_crossing;
-            for (std::size_t bin = mode.first; bin > 0U; --bin) {
-                const std::size_t left_bin = bin - 1U;
-                const long double left = static_cast<long double>(
-                    bins[offset + left_bin]
-                );
-                if (left <= half) {
+            for (std::size_t local = mode_first; local > 0U; --local) {
+                const std::size_t left = local - 1U;
+                if (levels[left] <= half) {
                     left_crossing = interpolate_half_crossing(
-                        histogram_bin_center(binning, left_bin),
-                        left,
-                        histogram_bin_center(binning, bin),
-                        static_cast<long double>(bins[offset + bin]),
+                        histogram_bin_center(
+                            binning,
+                            full_region.first_bin + left
+                        ),
+                        levels[left],
+                        histogram_bin_center(
+                            binning,
+                            full_region.first_bin + local
+                        ),
+                        levels[local],
+                        half
+                    );
+                    break;
+                }
+            }
+
+            std::optional<double> right_crossing;
+            for (std::size_t local = mode_last + 1U;
+                 local < levels.size();
+                 ++local) {
+                if (levels[local] <= half) {
+                    const std::size_t previous = local - 1U;
+                    right_crossing = interpolate_half_crossing(
+                        histogram_bin_center(
+                            binning,
+                            full_region.first_bin + previous
+                        ),
+                        levels[previous],
+                        histogram_bin_center(
+                            binning,
+                            full_region.first_bin + local
+                        ),
+                        levels[local],
                         half
                     );
                     break;
                 }
             }
             if (!left_crossing.has_value() ||
+                !right_crossing.has_value() ||
                 right_crossing.value() <= left_crossing.value()) {
                 return std::nullopt;
             }
+
             const double fwhm =
                 right_crossing.value() - left_crossing.value();
-            radius = fwhm / kRadialFwhmOverRadius;
-            break;
+            const double radius = fwhm / kRadialFwhmOverRadius;
+            return std::isfinite(radius) && radius > 0.0
+                ? std::optional<double>{radius}
+                : std::nullopt;
         }
     }
-
-    if (!std::isfinite(radius) || radius <= 0.0) {
-        return std::nullopt;
-    }
-    return radius;
+    return std::nullopt;
 }
 
 std::optional<StatisticalRegion> select_delta_t_region(
