@@ -55,9 +55,13 @@ GaussianFitResult invalid_gaussian_result(FitFailureReason reason) {
 /**
  * @brief Build an explicit invalid mixed fit result without fabricated data.
  * @param reason Stable reason explaining why no mixed result is published.
- * @return Invalid result carrying only diagnostics and @p reason.
+ * @param estimator Objective identity retained even when no fit is attempted.
+ * @return Invalid result carrying only diagnostics, @p reason, and @p estimator.
  */
-MixedFitResult invalid_mixed_result(FitFailureReason reason) {
+MixedFitResult invalid_mixed_result(
+    FitFailureReason reason,
+    FitEstimator estimator
+) {
     const MigradDiagnostic empty = unattempted_migrad();
     const std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{
         empty, empty, empty, empty, empty
@@ -65,6 +69,7 @@ MixedFitResult invalid_mixed_result(FitFailureReason reason) {
     return {
         false,
         reason,
+        estimator,
         starts,
         0U,
         0U,
@@ -97,7 +102,15 @@ ShapeHistogramResult not_applicable_shape_result() {
         0U,
         {},
         invalid_gaussian_result(FitFailureReason::NotApplicable),
-        invalid_mixed_result(FitFailureReason::NotApplicable)
+        invalid_mixed_result(
+            FitFailureReason::NotApplicable, FitEstimator::Poisson
+        ),
+        invalid_mixed_result(
+            FitFailureReason::NotApplicable, FitEstimator::Neyman
+        ),
+        invalid_mixed_result(
+            FitFailureReason::NotApplicable, FitEstimator::Pearson
+        )
     };
 }
 
@@ -112,7 +125,8 @@ constexpr std::uint64_t kMinimumRadialSliceSelectedCount = 10000U;
  * @param binning Validated uniform binning.
  * @param apply_radial_slice_quality_cut Whether the provisional radial kinetic
  *        slice threshold N_selected >= 10000 is required for this histogram.
- * @return Full/core regions plus independent Gaussian and mixed fit results.
+ * @return Full/core regions plus one Gaussian result and three independent
+ *         mixed results (Poisson, Neyman, Pearson).
  */
 ShapeHistogramResult analyze_shape_histogram(
     FitObservableFamily family,
@@ -130,7 +144,15 @@ ShapeHistogramResult analyze_shape_histogram(
             0U,
             {},
             invalid_gaussian_result(FitFailureReason::EmptyHistogram),
-            invalid_mixed_result(FitFailureReason::EmptyHistogram)
+            invalid_mixed_result(
+                FitFailureReason::EmptyHistogram, FitEstimator::Poisson
+            ),
+            invalid_mixed_result(
+                FitFailureReason::EmptyHistogram, FitEstimator::Neyman
+            ),
+            invalid_mixed_result(
+                FitFailureReason::EmptyHistogram, FitEstimator::Pearson
+            )
         };
     }
 
@@ -150,7 +172,15 @@ ShapeHistogramResult analyze_shape_histogram(
             region->selected_count,
             {},
             invalid_gaussian_result(FitFailureReason::InsufficientStatistics),
-            invalid_mixed_result(FitFailureReason::InsufficientStatistics)
+            invalid_mixed_result(
+                FitFailureReason::InsufficientStatistics, FitEstimator::Poisson
+            ),
+            invalid_mixed_result(
+                FitFailureReason::InsufficientStatistics, FitEstimator::Neyman
+            ),
+            invalid_mixed_result(
+                FitFailureReason::InsufficientStatistics, FitEstimator::Pearson
+            )
         };
     }
     if (!core_region.has_value()) {
@@ -160,7 +190,15 @@ ShapeHistogramResult analyze_shape_histogram(
             region->selected_count,
             {},
             invalid_gaussian_result(FitFailureReason::InsufficientBins),
-            invalid_mixed_result(FitFailureReason::InvalidGaussianCoreAnchor)
+            invalid_mixed_result(
+                FitFailureReason::InvalidGaussianCoreAnchor, FitEstimator::Poisson
+            ),
+            invalid_mixed_result(
+                FitFailureReason::InvalidGaussianCoreAnchor, FitEstimator::Neyman
+            ),
+            invalid_mixed_result(
+                FitFailureReason::InvalidGaussianCoreAnchor, FitEstimator::Pearson
+            )
         };
     }
 
@@ -177,6 +215,25 @@ ShapeHistogramResult analyze_shape_histogram(
         offset,
         binning,
         region.value(),
+        FitEstimator::Poisson,
+        gaussian
+    );
+    MixedFitResult mixed_neyman = fit_mixed_model(
+        family,
+        bins,
+        offset,
+        binning,
+        region.value(),
+        FitEstimator::Neyman,
+        gaussian
+    );
+    MixedFitResult mixed_pearson = fit_mixed_model(
+        family,
+        bins,
+        offset,
+        binning,
+        region.value(),
+        FitEstimator::Pearson,
         gaussian
     );
     return {
@@ -185,7 +242,9 @@ ShapeHistogramResult analyze_shape_histogram(
         region->selected_count,
         {},
         std::move(gaussian),
-        std::move(mixed)
+        std::move(mixed),
+        std::move(mixed_neyman),
+        std::move(mixed_pearson)
     };
 }
 
@@ -365,25 +424,40 @@ void require_shape_result(const ShapeHistogramResult& result) {
         );
     }
 
-    if (result.mixed.fully_valid) {
-        if (!result.mixed.core_radius.has_value() ||
-            !result.mixed.tail_radius.has_value() ||
-            !result.mixed.core_fraction.has_value() ||
-            !result.mixed.q_min.has_value() ||
-            !result.mixed.selected_core_start.has_value() ||
-            result.mixed.consensus_size < 4U ||
-            result.mixed.fitted_pdf.size() != count) {
+    if (result.mixed.estimator != FitEstimator::Poisson ||
+        result.mixed_neyman.estimator != FitEstimator::Neyman ||
+        result.mixed_pearson.estimator != FitEstimator::Pearson) {
+        throw std::logic_error(
+            "HBT analysis state: mixed estimator identity mismatch"
+        );
+    }
+
+    const std::array<const MixedFitResult*, 3U> mixed_results{
+        &result.mixed,
+        &result.mixed_neyman,
+        &result.mixed_pearson
+    };
+    for (const MixedFitResult* mixed : mixed_results) {
+        if (mixed->fully_valid) {
+            if (!mixed->core_radius.has_value() ||
+                !mixed->tail_radius.has_value() ||
+                !mixed->core_fraction.has_value() ||
+                !mixed->q_min.has_value() ||
+                !mixed->selected_core_start.has_value() ||
+                mixed->consensus_size < 4U ||
+                mixed->fitted_pdf.size() != count) {
+                throw std::logic_error(
+                    "HBT analysis state: valid mixed fit is incomplete"
+                );
+            }
+        } else if (mixed->core_radius.has_value() ||
+                   mixed->tail_radius.has_value() ||
+                   mixed->core_fraction.has_value() ||
+                   !mixed->fitted_pdf.empty()) {
             throw std::logic_error(
-                "HBT analysis state: valid mixed fit is incomplete"
+                "HBT analysis state: invalid mixed fit has fabricated output"
             );
         }
-    } else if (result.mixed.core_radius.has_value() ||
-               result.mixed.tail_radius.has_value() ||
-               result.mixed.core_fraction.has_value() ||
-               !result.mixed.fitted_pdf.empty()) {
-        throw std::logic_error(
-            "HBT analysis state: invalid mixed fit has fabricated output"
-        );
     }
 }
 

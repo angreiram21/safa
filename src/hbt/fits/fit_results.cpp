@@ -183,6 +183,19 @@ const char* fit_failure_reason_token(FitFailureReason reason) {
     throw std::invalid_argument("invalid FitFailureReason");
 }
 
+const char* fit_estimator_token(FitEstimator estimator) {
+    switch (estimator) {
+        case FitEstimator::Poisson:
+            return "poisson";
+        case FitEstimator::Neyman:
+            return "neyman";
+        case FitEstimator::Pearson:
+            return "pearson";
+    }
+
+    throw std::invalid_argument("invalid FitEstimator");
+}
+
 const char* delta_t_status_token(DeltaTStatisticsStatus status) {
     switch (status) {
         case DeltaTStatisticsStatus::Valid:

@@ -464,7 +464,7 @@ void write_migrad_fields(
 void write_parameter_header(std::ostream& output) {
     output
         << "product_index,origin,scope,slice_index,frame,family,observable,"
-        << "model,parameter,fully_valid,failure_reason,q_min,value,"
+        << "model,estimator,parameter,fully_valid,failure_reason,q_min,value,"
         << "error_minus,error_plus,fit_first_bin,fit_last_bin,N_fit,"
         << "fit_lower_edge,fit_upper_edge,"
         << "migrad_attempted,migrad_valid,migrad_valid_covariance,"
@@ -554,7 +554,7 @@ void write_gaussian_row(
         slice_index,
         location
     );
-    output << ",gaussian,R_G_core,";
+    output << ",gaussian,poisson,R_G_core,";
     write_bool(output, result.fully_valid);
     output << ',' << hbt::fit_failure_reason_token(result.failure_reason)
            << ',';
@@ -602,7 +602,8 @@ void write_mixed_shared_fields(
  * @param origin Physical origin token.
  * @param slice_index Global or flat-slice identity.
  * @param location Observable presentation identity.
- * @param result Completed independent mixed-model fit result.
+ * @param result Completed independent mixed-model fit result. Its estimator
+ *        identity is serialized directly from the result to prevent mismatch.
  * @param fit_region Full statistical region actually fitted by the mixed model.
  * @param binning Owning uniform histogram binning used for physical edges.
  * @param parameter Stable physical parameter name.
@@ -629,7 +630,9 @@ void write_mixed_row(
         slice_index,
         location
     );
-    output << ",gaussian_plus_exponential," << parameter << ',';
+    output << ",gaussian_plus_exponential,"
+           << hbt::fit_estimator_token(result.estimator) << ','
+           << parameter << ',';
     write_bool(output, result.fully_valid);
     output << ',' << hbt::fit_failure_reason_token(result.failure_reason)
            << ',';
@@ -690,7 +693,14 @@ void write_shape_result(
             distribution << ",gaussian_fit_pdf";
         }
         if (result.mixed.fully_valid) {
+            // Backward-compatible default curve: Poisson mixed estimator.
             distribution << ",mixed_fit_pdf";
+        }
+        if (result.mixed_neyman.fully_valid) {
+            distribution << ",mixed_fit_pdf_neyman";
+        }
+        if (result.mixed_pearson.fully_valid) {
+            distribution << ",mixed_fit_pdf_pearson";
         }
         distribution << '\n';
 
@@ -719,6 +729,12 @@ void write_shape_result(
             if (result.mixed.fully_valid) {
                 distribution << ',' << result.mixed.fitted_pdf[index];
             }
+            if (result.mixed_neyman.fully_valid) {
+                distribution << ',' << result.mixed_neyman.fitted_pdf[index];
+            }
+            if (result.mixed_pearson.fully_valid) {
+                distribution << ',' << result.mixed_pearson.fitted_pdf[index];
+            }
             distribution << '\n';
         }
         require_written(distribution, directory, "distribution.csv");
@@ -739,51 +755,59 @@ void write_shape_result(
         result.gaussian_core_region,
         binning
     );
-    const std::optional<hbt::FitParameterEstimate> core_radius =
-        result.mixed.fully_valid ? result.mixed.core_radius : std::nullopt;
-    const std::optional<hbt::FitParameterEstimate> tail_radius =
-        result.mixed.fully_valid ? result.mixed.tail_radius : std::nullopt;
-    const std::optional<hbt::FitParameterEstimate> core_fraction =
-        result.mixed.fully_valid ? result.mixed.core_fraction : std::nullopt;
-    write_mixed_row(
-        parameters,
-        product_index,
-        origin,
-        slice_index,
-        location,
-        result.mixed,
-        result.region,
-        binning,
-        "R_core",
-        core_radius,
-        result.mixed.minos_core_radius
-    );
-    write_mixed_row(
-        parameters,
-        product_index,
-        origin,
-        slice_index,
-        location,
-        result.mixed,
-        result.region,
-        binning,
-        "R_tail",
-        tail_radius,
-        result.mixed.minos_tail_radius
-    );
-    write_mixed_row(
-        parameters,
-        product_index,
-        origin,
-        slice_index,
-        location,
-        result.mixed,
-        result.region,
-        binning,
-        "f_core",
-        core_fraction,
-        result.mixed.minos_core_fraction
-    );
+    const std::array<const hbt::MixedFitResult*, 3U> mixed_outputs{{
+        &result.mixed,
+        &result.mixed_neyman,
+        &result.mixed_pearson
+    }};
+    for (const hbt::MixedFitResult* mixed_ptr : mixed_outputs) {
+        const hbt::MixedFitResult& mixed = *mixed_ptr;
+        const std::optional<hbt::FitParameterEstimate> core_radius =
+            mixed.fully_valid ? mixed.core_radius : std::nullopt;
+        const std::optional<hbt::FitParameterEstimate> tail_radius =
+            mixed.fully_valid ? mixed.tail_radius : std::nullopt;
+        const std::optional<hbt::FitParameterEstimate> core_fraction =
+            mixed.fully_valid ? mixed.core_fraction : std::nullopt;
+        write_mixed_row(
+            parameters,
+            product_index,
+            origin,
+            slice_index,
+            location,
+            mixed,
+            result.region,
+            binning,
+            "R_core",
+            core_radius,
+            mixed.minos_core_radius
+        );
+        write_mixed_row(
+            parameters,
+            product_index,
+            origin,
+            slice_index,
+            location,
+            mixed,
+            result.region,
+            binning,
+            "R_tail",
+            tail_radius,
+            mixed.minos_tail_radius
+        );
+        write_mixed_row(
+            parameters,
+            product_index,
+            origin,
+            slice_index,
+            location,
+            mixed,
+            result.region,
+            binning,
+            "f_core",
+            core_fraction,
+            mixed.minos_core_fraction
+        );
+    }
     require_written(parameters, directory, "fit_parameters.csv");
 }
 

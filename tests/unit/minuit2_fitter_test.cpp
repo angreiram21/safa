@@ -136,41 +136,58 @@ bool verify_mixed_multistart_and_minos() {
         return fail("mixed synthetic sample did not provide a valid Gaussian anchor");
     }
 
-    const hbt::MixedFitResult mixed = hbt::fit_mixed_model(
-        hbt::FitObservableFamily::OSL,
-        counts,
-        0U,
-        binning,
-        region,
-        gaussian
-    );
-    if (mixed.starts_attempted != hbt::MixedFitResult::kCoreStartCount ||
-        mixed.valid_starts < 4U || mixed.consensus_size < 4U ||
-        !mixed.selected_core_start.has_value()) {
-        return fail("mixed five-start core-basin consensus was not established");
-    }
-    for (const hbt::MigradDiagnostic& start : mixed.starts) {
-        if (!start.attempted) {
-            return fail("mixed contract did not attempt all five core starts");
+    const hbt::FitEstimator estimators[] = {
+        hbt::FitEstimator::Poisson,
+        hbt::FitEstimator::Neyman,
+        hbt::FitEstimator::Pearson
+    };
+    for (const hbt::FitEstimator estimator : estimators) {
+        const hbt::MixedFitResult mixed = hbt::fit_mixed_model(
+            hbt::FitObservableFamily::OSL,
+            counts,
+            0U,
+            binning,
+            region,
+            estimator,
+            gaussian
+        );
+        if (mixed.estimator != estimator) {
+            return fail("mixed result lost its estimator identity");
         }
-    }
-    if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
-        !mixed.tail_radius.has_value() ||
-        !mixed.core_fraction.has_value() ||
-        !mixed.minos_core_radius.attempted ||
-        !mixed.minos_tail_radius.attempted ||
-        !mixed.minos_core_fraction.attempted ||
-        !mixed.minos_core_radius.lower_valid ||
-        !mixed.minos_core_radius.upper_valid ||
-        !mixed.minos_tail_radius.lower_valid ||
-        !mixed.minos_tail_radius.upper_valid ||
-        !mixed.minos_core_fraction.lower_valid ||
-        !mixed.minos_core_fraction.upper_valid) {
-        return fail("selected mixed minimum did not pass required MINOS");
-    }
-    if (mixed.core_fraction->value <= 0.0 ||
-        mixed.core_fraction->value >= 1.0) {
-        return fail("mixed fit published a degenerate core fraction");
+        if (mixed.starts_attempted != hbt::MixedFitResult::kCoreStartCount ||
+            mixed.valid_starts < 4U || mixed.consensus_size < 4U ||
+            !mixed.selected_core_start.has_value()) {
+            return fail(
+                "mixed estimator did not establish five-start basin consensus"
+            );
+        }
+        for (const hbt::MigradDiagnostic& start : mixed.starts) {
+            if (!start.attempted) {
+                return fail(
+                    "mixed estimator did not attempt all five core starts"
+                );
+            }
+        }
+        if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
+            !mixed.tail_radius.has_value() ||
+            !mixed.core_fraction.has_value() ||
+            !mixed.minos_core_radius.attempted ||
+            !mixed.minos_tail_radius.attempted ||
+            !mixed.minos_core_fraction.attempted ||
+            !mixed.minos_core_radius.lower_valid ||
+            !mixed.minos_core_radius.upper_valid ||
+            !mixed.minos_tail_radius.lower_valid ||
+            !mixed.minos_tail_radius.upper_valid ||
+            !mixed.minos_core_fraction.lower_valid ||
+            !mixed.minos_core_fraction.upper_valid) {
+            return fail(
+                "selected mixed estimator minimum did not pass required MINOS"
+            );
+        }
+        if (mixed.core_fraction->value <= 0.0 ||
+            mixed.core_fraction->value >= 1.0) {
+            return fail("mixed estimator published a degenerate core fraction");
+        }
     }
     return true;
 }
@@ -349,6 +366,7 @@ bool verify_insufficient_bins_are_reported() {
         0U,
         binning,
         three_bins,
+        hbt::FitEstimator::Poisson,
         gaussian
     );
     if (mixed.fully_valid ||

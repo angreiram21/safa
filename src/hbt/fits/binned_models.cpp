@@ -638,7 +638,7 @@ double binned_poisson_deviance(
         region.last_bin - region.first_bin + 1U;
     if (probabilities.size() != selected_bins) {
         throw std::invalid_argument(
-            "HBT analysis likelihood: probability cardinality mismatch"
+            "HBT analysis objective: probability cardinality mismatch"
         );
     }
     if (offset > bins.size() ||
@@ -646,41 +646,38 @@ double binned_poisson_deviance(
         region.first_bin > bins.size() - offset ||
         selected_bins > bins.size() - offset - region.first_bin) {
         throw std::out_of_range(
-            "HBT analysis likelihood: selected raw histogram range is "
+            "HBT analysis objective: selected raw histogram range is "
             "unavailable"
         );
     }
     if (region.selected_count == 0U) {
         throw std::invalid_argument(
-            "HBT analysis likelihood: selected count is zero"
+            "HBT analysis objective: selected count is zero"
         );
     }
 
     std::uint64_t raw_sum = 0U;
+    long double probability_sum = 0.0L;
     for (std::size_t index = 0U; index < selected_bins; ++index) {
-        const std::uint64_t raw =
-            bins[offset + region.first_bin + index];
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
         if (raw > std::numeric_limits<std::uint64_t>::max() - raw_sum) {
             throw std::overflow_error(
-                "HBT analysis likelihood: selected raw count overflow"
+                "HBT analysis objective: selected raw count overflow"
             );
         }
         raw_sum += raw;
-    }
-    if (raw_sum != region.selected_count) {
-        throw std::invalid_argument(
-            "HBT analysis likelihood: selected count differs from raw counts"
-        );
-    }
-
-    long double probability_sum = 0.0L;
-    for (const double probability : probabilities) {
+        const double probability = probabilities[index];
         if (!std::isfinite(probability) || probability <= 0.0) {
             throw std::invalid_argument(
-                "HBT analysis likelihood: invalid model probability"
+                "HBT analysis objective: invalid model probability"
             );
         }
         probability_sum += static_cast<long double>(probability);
+    }
+    if (raw_sum != region.selected_count) {
+        throw std::invalid_argument(
+            "HBT analysis objective: selected count differs from raw counts"
+        );
     }
 
     const long double normalization_tolerance =
@@ -689,23 +686,20 @@ double binned_poisson_deviance(
     if (!std::isfinite(probability_sum) ||
         std::fabs(probability_sum - 1.0L) > normalization_tolerance) {
         throw std::invalid_argument(
-            "HBT analysis likelihood: model probabilities are not normalized"
+            "HBT analysis objective: model probabilities are not normalized"
         );
     }
 
     double deviance = 0.0;
     for (std::size_t index = 0U; index < selected_bins; ++index) {
-        const double probability = probabilities[index];
-        const double expected =
-            static_cast<double>(region.selected_count) * probability;
+        const double expected = static_cast<double>(region.selected_count) *
+            probabilities[index];
         if (!std::isfinite(expected) || expected <= 0.0) {
             throw std::invalid_argument(
-                "HBT analysis likelihood: invalid expected count"
+                "HBT analysis objective: invalid expected count"
             );
         }
-
-        const std::uint64_t raw =
-            bins[offset + region.first_bin + index];
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
         if (raw == 0U) {
             deviance += 2.0 * expected;
         } else {
@@ -716,13 +710,154 @@ double binned_poisson_deviance(
             );
         }
     }
-
     if (!std::isfinite(deviance)) {
         throw std::invalid_argument(
-            "HBT analysis likelihood: non-finite objective evaluation"
+            "HBT analysis objective: non-finite Poisson deviance"
         );
     }
     return deviance;
+}
+
+namespace {
+
+/**
+ * @brief Validate common binned-estimator bookkeeping and normalization.
+ * @param bins Raw histogram counts.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param region Selected contiguous statistical region.
+ * @param probabilities Model probabilities aligned with selected bins.
+ * @return Number of selected bins after all checks pass.
+ * @throws std::invalid_argument For invalid probabilities or count bookkeeping.
+ * @throws std::out_of_range If the selected raw range is unavailable.
+ */
+std::size_t validate_chi_square_inputs(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& probabilities
+) {
+    const std::size_t selected_bins =
+        region.last_bin - region.first_bin + 1U;
+    if (probabilities.size() != selected_bins) {
+        throw std::invalid_argument(
+            "HBT analysis chi-square: probability cardinality mismatch"
+        );
+    }
+    if (offset > bins.size() ||
+        region.first_bin > region.last_bin ||
+        region.first_bin > bins.size() - offset ||
+        selected_bins > bins.size() - offset - region.first_bin) {
+        throw std::out_of_range(
+            "HBT analysis chi-square: selected raw histogram range is unavailable"
+        );
+    }
+    if (region.selected_count == 0U) {
+        throw std::invalid_argument(
+            "HBT analysis chi-square: selected count is zero"
+        );
+    }
+
+    std::uint64_t raw_sum = 0U;
+    long double probability_sum = 0.0L;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        if (raw > std::numeric_limits<std::uint64_t>::max() - raw_sum) {
+            throw std::overflow_error(
+                "HBT analysis chi-square: selected raw count overflow"
+            );
+        }
+        raw_sum += raw;
+        const double probability = probabilities[index];
+        if (!std::isfinite(probability) || probability <= 0.0) {
+            throw std::invalid_argument(
+                "HBT analysis chi-square: invalid model probability"
+            );
+        }
+        probability_sum += static_cast<long double>(probability);
+    }
+    if (raw_sum != region.selected_count) {
+        throw std::invalid_argument(
+            "HBT analysis chi-square: selected count differs from raw counts"
+        );
+    }
+    const long double normalization_tolerance =
+        static_cast<long double>(std::numeric_limits<double>::epsilon()) *
+        static_cast<long double>(selected_bins);
+    if (!std::isfinite(probability_sum) ||
+        std::fabs(probability_sum - 1.0L) > normalization_tolerance) {
+        throw std::invalid_argument(
+            "HBT analysis chi-square: model probabilities are not normalized"
+        );
+    }
+    return selected_bins;
+}
+
+}  // namespace
+
+double binned_neyman_chi_square(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& probabilities
+) {
+    const std::size_t selected_bins = validate_chi_square_inputs(
+        bins, offset, region, probabilities
+    );
+    double chi_square = 0.0;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        if (raw == 0U) {
+            continue;
+        }
+        const double observed = static_cast<double>(raw);
+        const double expected = static_cast<double>(region.selected_count) *
+            probabilities[index];
+        if (!std::isfinite(expected) || expected <= 0.0) {
+            throw std::invalid_argument(
+                "HBT analysis Neyman chi-square: invalid expected count"
+            );
+        }
+        const double residual = observed - expected;
+        chi_square += residual * residual / observed;
+    }
+    if (!std::isfinite(chi_square)) {
+        throw std::invalid_argument(
+            "HBT analysis Neyman chi-square: non-finite objective evaluation"
+        );
+    }
+    return chi_square;
+}
+
+double binned_pearson_chi_square(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& probabilities
+) {
+    const std::size_t selected_bins = validate_chi_square_inputs(
+        bins, offset, region, probabilities
+    );
+    double chi_square = 0.0;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const double observed = static_cast<double>(
+            bins[offset + region.first_bin + index]
+        );
+        const double expected = static_cast<double>(region.selected_count) *
+            probabilities[index];
+        if (!std::isfinite(expected) || expected <= 0.0) {
+            throw std::invalid_argument(
+                "HBT analysis Pearson chi-square: invalid expected count"
+            );
+        }
+        const double residual = observed - expected;
+        chi_square += residual * residual / expected;
+    }
+    if (!std::isfinite(chi_square)) {
+        throw std::invalid_argument(
+            "HBT analysis Pearson chi-square: non-finite objective evaluation"
+        );
+    }
+    return chi_square;
 }
 
 std::vector<double> probabilities_to_pdf(

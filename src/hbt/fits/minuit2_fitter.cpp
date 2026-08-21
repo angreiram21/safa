@@ -76,9 +76,13 @@ GaussianFitResult invalid_gaussian(FitFailureReason reason) {
 /**
  * @brief Build an invalid mixed result before any minimization.
  * @param reason Exact invalidity reason.
- * @return Empty numerical result carrying @p reason.
+ * @param estimator Statistical objective associated with the empty result.
+ * @return Empty numerical result carrying @p reason and @p estimator.
  */
-MixedFitResult invalid_mixed(FitFailureReason reason) {
+MixedFitResult invalid_mixed(
+    FitFailureReason reason,
+    FitEstimator estimator
+) {
     const MigradDiagnostic empty = unattempted_migrad();
     const std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{
         empty, empty, empty, empty, empty
@@ -86,6 +90,7 @@ MixedFitResult invalid_mixed(FitFailureReason reason) {
     return {
         false,
         reason,
+        estimator,
         starts,
         0U,
         0U,
@@ -238,39 +243,44 @@ private:
 };
 
 /**
- * @brief Minuit2 objective for the normalized mixed shape model.
+ * @brief Minuit2 objective for one normalized mixed-model estimator.
  *
- * Parameter order is log(R_core), log(R_tail), f_core. Borrowed references are
- * retained only during one synchronous fit invocation.
+ * Parameter order is log(R_core), log(R_tail), f_core. The model probability
+ * calculation is identical for every estimator; only the scalar objective
+ * applied to the same raw counts and expected counts changes. Borrowed
+ * references are retained only during one synchronous fit invocation.
  */
 class MixedObjective final : public ROOT::Minuit2::FCNBase {
 public:
     /**
-     * @brief Construct a synchronous mixed-model likelihood objective.
+     * @brief Construct a synchronous mixed-model objective.
      * @param family OSL or radial physical family.
      * @param bins Borrowed raw uint64_t count storage.
      * @param offset First logical histogram counter.
      * @param binning Borrowed validated uniform binning.
      * @param region Selected contiguous statistical region, copied by value.
+     * @param estimator Statistical objective evaluated for this fit only.
      */
     MixedObjective(
         FitObservableFamily family,
         const std::vector<std::uint64_t>& bins,
         std::size_t offset,
         const HistogramBinningConfig& binning,
-        StatisticalRegion region
+        StatisticalRegion region,
+        FitEstimator estimator
     )
         : family_(family),
           bins_(bins),
           offset_(offset),
           binning_(binning),
-          region_(region) {}
+          region_(region),
+          estimator_(estimator) {}
 
     /**
-     * @brief Evaluate -2 log L from log radii and core fraction.
+     * @brief Evaluate the configured objective from mixed-model parameters.
      * @param parameters Minuit external parameters in fixed model order.
-     * @return Finite deviance, or the largest finite double for an invalid
-     *         model evaluation. Returned minima are validated explicitly.
+     * @return Finite objective value, or the largest finite double for an
+     *         invalid model/objective evaluation.
      */
     double operator()(const std::vector<double>& parameters) const override {
         if (parameters.size() != 3U) {
@@ -279,27 +289,38 @@ public:
         const double core_radius = std::exp(parameters[0]);
         const double tail_radius = std::exp(parameters[1]);
         try {
-            return binned_poisson_deviance(
-                bins_,
-                offset_,
+            const std::vector<double> probabilities = mixed_bin_probabilities(
+                family_,
+                binning_,
                 region_,
-                mixed_bin_probabilities(
-                    family_,
-                    binning_,
-                    region_,
-                    core_radius,
-                    tail_radius,
-                    parameters[2]
-                )
+                core_radius,
+                tail_radius,
+                parameters[2]
             );
+            switch (estimator_) {
+                case FitEstimator::Poisson:
+                    return binned_poisson_deviance(
+                        bins_, offset_, region_, probabilities
+                    );
+                case FitEstimator::Neyman:
+                    return binned_neyman_chi_square(
+                        bins_, offset_, region_, probabilities
+                    );
+                case FitEstimator::Pearson:
+                    return binned_pearson_chi_square(
+                        bins_, offset_, region_, probabilities
+                    );
+            }
         } catch (const std::exception&) {
             return std::numeric_limits<double>::max();
         }
+        return std::numeric_limits<double>::max();
     }
 
     /**
-     * @brief Return Minuit error definition for a -2 log likelihood.
-     * @return Exactly 1.0 as required by the post-sample MINOS contract.
+     * @brief Return the MINOS error definition for every supported objective.
+     * @return Exactly 1.0, corresponding to Delta(-2 log L)=1 for Poisson and
+     *         Delta(chi-square)=1 for the two chi-square estimators.
      */
     double Up() const override {
         return 1.0;
@@ -311,6 +332,7 @@ private:
     std::size_t offset_; ///< First logical raw counter.
     const HistogramBinningConfig& binning_; ///< Borrowed binning metadata.
     StatisticalRegion region_; ///< Selected region copied by value.
+    FitEstimator estimator_; ///< Objective used only by this independent fit.
 };
 
 /**
@@ -591,17 +613,18 @@ MixedFitResult fit_mixed_model(
     std::size_t offset,
     const HistogramBinningConfig& binning,
     const StatisticalRegion& region,
+    FitEstimator estimator,
     const GaussianFitResult& gaussian_result
 ) {
     const std::size_t selected_bins =
         region.last_bin - region.first_bin + 1U;
     if (selected_bins < 4U || region.selected_count == 0U) {
-        return invalid_mixed(FitFailureReason::InsufficientBins);
+        return invalid_mixed(FitFailureReason::InsufficientBins, estimator);
     }
     if (!gaussian_result.fully_valid || !gaussian_result.radius.has_value() ||
         !std::isfinite(gaussian_result.radius->value) ||
         gaussian_result.radius->value <= 0.0) {
-        return invalid_mixed(FitFailureReason::InvalidGaussianCoreAnchor);
+        return invalid_mixed(FitFailureReason::InvalidGaussianCoreAnchor, estimator);
     }
 
     const std::optional<RadiusSeeds> seeds = derive_radius_seeds(
@@ -612,7 +635,7 @@ MixedFitResult fit_mixed_model(
         region
     );
     if (!seeds.has_value()) {
-        return invalid_mixed(FitFailureReason::InvalidMomentSeed);
+        return invalid_mixed(FitFailureReason::InvalidMomentSeed, estimator);
     }
 
     const double core_seed = gaussian_result.radius->value;
@@ -624,7 +647,7 @@ MixedFitResult fit_mixed_model(
         0.50, 0.50, 0.50, 0.25, 0.75
     };
 
-    MixedFitResult result = invalid_mixed(FitFailureReason::MigradInvalid);
+    MixedFitResult result = invalid_mixed(FitFailureReason::MigradInvalid, estimator);
     std::vector<MixedStartOutcome> outcomes;
     outcomes.reserve(MixedFitResult::kCoreStartCount);
     std::vector<std::size_t> valid_indices;
@@ -633,7 +656,9 @@ MixedFitResult fit_mixed_model(
     for (std::size_t index = 0U;
          index < MixedFitResult::kCoreStartCount;
          ++index) {
-        MixedObjective objective(family, bins, offset, binning, region);
+        MixedObjective objective(
+            family, bins, offset, binning, region, estimator
+        );
         auto start = run_mixed_migrad(
             objective,
             core_seed,
@@ -726,7 +751,9 @@ MixedFitResult fit_mixed_model(
         return result;
     }
 
-    MixedObjective selected_objective(family, bins, offset, binning, region);
+    MixedObjective selected_objective(
+        family, bins, offset, binning, region, estimator
+    );
     MnMinos minos(selected_objective, selected);
     const MinosError core_error = minos.Minos(0U);
     result.minos_core_radius = minos_diagnostic(core_error);

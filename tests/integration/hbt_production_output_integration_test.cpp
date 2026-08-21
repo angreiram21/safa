@@ -200,7 +200,11 @@ bool verify_analysis_and_output() {
     const hbt::ShapeHistogramResult& shape =
         derived.products[0U].origins[0U].global.osl[0U];
     if (!shape.region.has_value() || shape.normalized_bins.size() != 20U ||
-        !shape.gaussian.fully_valid || !shape.mixed.fully_valid) {
+        !shape.gaussian.fully_valid || !shape.mixed.fully_valid ||
+        !shape.mixed_neyman.fully_valid || !shape.mixed_pearson.fully_valid ||
+        shape.mixed.estimator != hbt::FitEstimator::Poisson ||
+        shape.mixed_neyman.estimator != hbt::FitEstimator::Neyman ||
+        shape.mixed_pearson.estimator != hbt::FitEstimator::Pearson) {
         return fail("post-sample shape analysis did not produce valid state");
     }
     double normalized_integral = 0.0;
@@ -217,8 +221,14 @@ bool verify_analysis_and_output() {
             hbt::FitFailureReason::NotApplicable ||
         slice_osl.mixed.failure_reason !=
             hbt::FitFailureReason::NotApplicable ||
+        slice_osl.mixed_neyman.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
+        slice_osl.mixed_pearson.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
         slice_osl.gaussian.migrad.attempted ||
-        slice_osl.mixed.starts_attempted != 0U) {
+        slice_osl.mixed.starts_attempted != 0U ||
+        slice_osl.mixed_neyman.starts_attempted != 0U ||
+        slice_osl.mixed_pearson.starts_attempted != 0U) {
         return fail("OSL kinetic slice unexpectedly executed a fit");
     }
 
@@ -228,9 +238,15 @@ bool verify_analysis_and_output() {
         low_stat_radial.selected_count >= 10000U ||
         low_stat_radial.gaussian.fully_valid ||
         low_stat_radial.mixed.fully_valid ||
+        low_stat_radial.mixed_neyman.fully_valid ||
+        low_stat_radial.mixed_pearson.fully_valid ||
         low_stat_radial.gaussian.failure_reason !=
             hbt::FitFailureReason::InsufficientStatistics ||
         low_stat_radial.mixed.failure_reason !=
+            hbt::FitFailureReason::InsufficientStatistics ||
+        low_stat_radial.mixed_neyman.failure_reason !=
+            hbt::FitFailureReason::InsufficientStatistics ||
+        low_stat_radial.mixed_pearson.failure_reason !=
             hbt::FitFailureReason::InsufficientStatistics) {
         return fail("radial mT low-statistics quality cut was not enforced");
     }
@@ -311,7 +327,9 @@ bool verify_analysis_and_output() {
     const std::string valid_distribution =
         read_text(lcms_out / "distribution.csv");
     if (valid_distribution.find("gaussian_fit_pdf") == std::string::npos ||
-        valid_distribution.find("mixed_fit_pdf") == std::string::npos) {
+        valid_distribution.find("mixed_fit_pdf") == std::string::npos ||
+        valid_distribution.find("mixed_fit_pdf_neyman") == std::string::npos ||
+        valid_distribution.find("mixed_fit_pdf_pearson") == std::string::npos) {
         std::filesystem::remove_all(root);
         return fail("valid fit curves were not serialized with their PDF");
     }
@@ -346,6 +364,10 @@ bool verify_analysis_and_output() {
     if (valid_parameters.find("minos_lower_valid") == std::string::npos ||
         valid_parameters.find("fit_upper_edge") == std::string::npos ||
         valid_parameters.find("R_G_core") == std::string::npos ||
+        valid_parameters.find("estimator") == std::string::npos ||
+        valid_parameters.find("poisson") == std::string::npos ||
+        valid_parameters.find("neyman") == std::string::npos ||
+        valid_parameters.find("pearson") == std::string::npos ||
         valid_parameters.find("consensus_size") == std::string::npos ||
         valid_parameters.find("core_start0_valid") == std::string::npos ||
         valid_parameters.find("core_start4_valid") == std::string::npos ||

@@ -45,6 +45,7 @@ namespace hbt {
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated uniform binning for this histogram family.
  * @param region Selected contiguous statistical region.
+ * @param estimator Statistical objective minimized by this independent mixed fit.
  * @param gaussian_result Valid truncated Gaussian-core result from the same
  *        histogram and observable geometry. Its radius seeds every core start.
  * @return Complete consensus-multistart fit result and explicit diagnostics.
@@ -54,8 +55,10 @@ namespace hbt {
  * @p gaussian_result. Their R_tail and f_core seeds are (R_tail,mom,0.50),
  * (0.5 R_tail,mom,0.50), (2 R_tail,mom,0.50), (R_tail,mom,0.25), and
  * (R_tail,mom,0.75). A result is publishable only when at least four starts
- * converge to the same numerical basin. Q selects the best realization only
- * inside that consensus basin; no ordering of R_core and R_tail is imposed.
+ * converge to the same numerical basin. The selected estimator objective
+ * chooses the best realization only inside that estimator's consensus basin;
+ * results from different estimators are never combined. No ordering of
+ * R_core and R_tail is imposed.
  */
 [[nodiscard]] MixedFitResult fit_mixed_model(
     FitObservableFamily family,
@@ -63,6 +66,7 @@ namespace hbt {
     std::size_t offset,
     const HistogramBinningConfig& binning,
     const StatisticalRegion& region,
+    FitEstimator estimator,
     const GaussianFitResult& gaussian_result
 );
 

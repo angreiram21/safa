@@ -118,6 +118,51 @@ namespace hbt {
 );
 
 /**
+ * @brief Evaluate Neyman chi-square from raw counts and model probabilities.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param region Selected contiguous statistical region.
+ * @param probabilities Unit-normalized model probabilities for selected bins.
+ * @return chi2_N = sum_{n_i>0} (n_i-mu_i)^2 / n_i.
+ * @throws std::invalid_argument If model probabilities or selected-count
+ *         bookkeeping are invalid.
+ * @throws std::out_of_range If the selected raw range is unavailable.
+ *
+ * Expected counts are mu_i = N_fit p_i with N_fit equal to the exact selected
+ * raw count. Bins with n_i == 0 are omitted, matching the historical SAFA
+ * Neyman weighting. The model remains normalized over the complete selected
+ * region; no free amplitude is introduced.
+ */
+[[nodiscard]] double binned_neyman_chi_square(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& probabilities
+);
+
+/**
+ * @brief Evaluate Pearson chi-square from raw counts and probabilities.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param region Selected contiguous statistical region.
+ * @param probabilities Unit-normalized model probabilities for selected bins.
+ * @return chi2_P = sum_i (n_i-mu_i)^2 / mu_i.
+ * @throws std::invalid_argument If model probabilities or selected-count
+ *         bookkeeping are invalid.
+ * @throws std::out_of_range If the selected raw range is unavailable.
+ *
+ * Zero-count observed bins remain in Pearson chi-square because mu_i is the
+ * denominator. The normalization and expected-count convention are identical
+ * to the Poisson and Neyman estimators.
+ */
+[[nodiscard]] double binned_pearson_chi_square(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& probabilities
+);
+
+/**
  * @brief Convert exact-bin model probabilities into density values.
  * @param probabilities Probabilities over selected uniform bins.
  * @param binning Owning validated uniform binning.

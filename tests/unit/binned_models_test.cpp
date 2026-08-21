@@ -187,6 +187,14 @@ bool verify_mixed_endpoint_degeneracies() {
         "degenerate_core_fraction") {
         return fail("mixed endpoint degeneracy has no stable report token");
     }
+    if (std::string(hbt::fit_estimator_token(hbt::FitEstimator::Poisson)) !=
+            "poisson" ||
+        std::string(hbt::fit_estimator_token(hbt::FitEstimator::Neyman)) !=
+            "neyman" ||
+        std::string(hbt::fit_estimator_token(hbt::FitEstimator::Pearson)) !=
+            "pearson") {
+        return fail("fit estimator has no stable serialization token");
+    }
     return true;
 }
 
@@ -285,6 +293,49 @@ bool verify_zero_count_likelihood_term() {
 }
 
 /**
+ * @brief Verify Neyman omits zero-count bins and uses observed denominators.
+ * @return true when the historical n_i > 0 weighting is reproduced exactly.
+ */
+bool verify_neyman_chi_square_terms() {
+    const std::vector<std::uint64_t> bins{0U, 10U};
+    const hbt::StatisticalRegion region{0U, 1U, 10U};
+    const std::vector<double> probabilities{0.25, 0.75};
+    const double actual = hbt::binned_neyman_chi_square(
+        bins,
+        0U,
+        region,
+        probabilities
+    );
+    const double expected = (10.0 - 7.5) * (10.0 - 7.5) / 10.0;
+    if (!close(actual, expected)) {
+        return fail("Neyman chi-square did not omit zero-count bins exactly");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify Pearson keeps zero-count bins with expected denominators.
+ * @return true when every selected bin contributes the documented term.
+ */
+bool verify_pearson_chi_square_terms() {
+    const std::vector<std::uint64_t> bins{0U, 10U};
+    const hbt::StatisticalRegion region{0U, 1U, 10U};
+    const std::vector<double> probabilities{0.25, 0.75};
+    const double actual = hbt::binned_pearson_chi_square(
+        bins,
+        0U,
+        region,
+        probabilities
+    );
+    const double expected = 2.5 +
+        (10.0 - 7.5) * (10.0 - 7.5) / 7.5;
+    if (!close(actual, expected)) {
+        return fail("Pearson chi-square did not retain zero-count bins");
+    }
+    return true;
+}
+
+/**
  * @brief Verify likelihood N is anchored to raw selected counts.
  * @return true when inconsistent selected_count is rejected explicitly.
  */
@@ -353,6 +404,8 @@ int main() {
         !verify_mixed_endpoint_degeneracies() ||
         !verify_large_radius_radial_stability() ||
         !verify_zero_count_likelihood_term() ||
+        !verify_neyman_chi_square_terms() ||
+        !verify_pearson_chi_square_terms() ||
         !verify_raw_count_anchor() ||
         !verify_likelihood_probability_normalization() ||
         !verify_integrated_curve_density()) {

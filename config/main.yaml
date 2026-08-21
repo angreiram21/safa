@@ -1,7 +1,7 @@
 events_path: "../../"
 output_path: "../output"
-number_of_events: 1
+number_of_events: 10
 number_of_subevents: 2000
-threads: 1
+threads: 10
 hbt_enabled: true
 hbt_config_path: "hbt.yaml"

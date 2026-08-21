@@ -23,6 +23,19 @@ enum class FitObservableFamily {
 };
 
 /**
+ * @brief Statistical objective used to estimate mixed-model parameters.
+ *
+ * Each estimator is minimized independently with its own five-start basin
+ * search, MIGRAD state, consensus decision, and MINOS uncertainties. Results
+ * from different estimators are never pooled into one consensus basin.
+ */
+enum class FitEstimator {
+    Poisson, ///< Binned Poisson deviance; production/default estimator.
+    Neyman,  ///< Neyman chi-square, omitting bins with n_i == 0.
+    Pearson  ///< Pearson chi-square with expected counts in the denominator.
+};
+
+/**
  * @brief Stable reason describing why a fit is not fully valid.
  */
 enum class FitFailureReason {
@@ -86,7 +99,7 @@ struct MigradDiagnostic {
     bool above_max_edm;           ///< Minimum remained above maximum EDM.
     bool objective_failure;       ///< Returned minimum cannot be evaluated.
     int function_calls;           ///< Function evaluations reported by Minuit.
-    std::optional<double> q_min;  ///< Finite objective value when available.
+    std::optional<double> q_min;  ///< Finite estimator objective when available.
 };
 
 /**
@@ -230,8 +243,9 @@ struct GaussianFitResult {
  * the same R_core seed from the independently fitted Gaussian core and varies
  * only R_tail and f_core. `consensus_size` records the largest numerically
  * equivalent solution group. A physical mixed result is published only when
- * at least four of the five starts agree on the same basin. Q is used only to
- * select the best numerical realization inside that consensus basin.
+ * at least four of the five starts agree on the same basin. The configured
+ * estimator objective is used only to select the best numerical realization
+ * inside that estimator-local consensus basin.
  */
 struct MixedFitResult {
     /// Number of deterministic Gaussian-core-anchored MIGRAD starts.
@@ -239,6 +253,7 @@ struct MixedFitResult {
 
     bool fully_valid;                 ///< Consensus fit and all MINOS are valid.
     FitFailureReason failure_reason;  ///< Primary invalidity cause, if any.
+    FitEstimator estimator;           ///< Objective minimized by this fit only.
     /// Diagnostics for the five deterministic Gaussian-core-anchored starts.
     std::array<MigradDiagnostic, kCoreStartCount> starts;
     std::size_t starts_attempted;     ///< Number of core starts actually run.
@@ -250,7 +265,7 @@ struct MixedFitResult {
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.
-    std::optional<double> q_min;       ///< Minimum Q inside consensus basin.
+    std::optional<double> q_min;       ///< Minimum estimator objective in basin.
     /// Physical core radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_radius;
     /// Physical tail radius and asymmetric MINOS errors when fully valid.
@@ -273,7 +288,12 @@ struct ShapeHistogramResult {
     /// Final normalized distribution over the full statistical region.
     std::vector<NormalizedHistogramBin> normalized_bins;
     GaussianFitResult gaussian;              ///< Truncated pure Gaussian core fit.
-    MixedFitResult mixed;                    ///< Full-range mixed-model fit.
+    /// Full-range mixed fit using the default binned Poisson deviance.
+    MixedFitResult mixed;
+    /// Full-range mixed fit using Neyman chi-square as an independent estimator.
+    MixedFitResult mixed_neyman;
+    /// Full-range mixed fit using Pearson chi-square as an independent estimator.
+    MixedFitResult mixed_pearson;
 };
 
 /**
@@ -346,6 +366,14 @@ struct HistogramAnalysisState {
  * @throws std::invalid_argument If @p reason is not a valid enum value.
  */
 [[nodiscard]] const char* fit_failure_reason_token(FitFailureReason reason);
+
+/**
+ * @brief Return a stable ASCII token for one fit estimator.
+ * @param estimator Statistical objective used by one independent fit.
+ * @return Static token: `poisson`, `neyman`, or `pearson`.
+ * @throws std::invalid_argument If @p estimator is not a valid enum value.
+ */
+[[nodiscard]] const char* fit_estimator_token(FitEstimator estimator);
 
 /**
  * @brief Return a stable ASCII token for one delta-t status.
