@@ -146,6 +146,8 @@ const char* fit_failure_reason_token(FitFailureReason reason) {
             return "insufficient_statistics";
         case FitFailureReason::InvalidMomentSeed:
             return "invalid_moment_seed";
+        case FitFailureReason::InvalidHalfMaximumSeed:
+            return "invalid_half_maximum_seed";
         case FitFailureReason::InvalidGaussianCoreAnchor:
             return "invalid_gaussian_core_anchor";
         case FitFailureReason::NoBasinConsensus:

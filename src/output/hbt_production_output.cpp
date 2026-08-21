@@ -554,7 +554,8 @@ void write_gaussian_row(
         slice_index,
         location
     );
-    output << ",gaussian,poisson,R_G_core,";
+    output << ",gaussian," << hbt::fit_estimator_token(result.estimator)
+           << ",R_G_core,";
     write_bool(output, result.fully_valid);
     output << ',' << hbt::fit_failure_reason_token(result.failure_reason)
            << ',';
@@ -692,6 +693,12 @@ void write_shape_result(
         if (result.gaussian.fully_valid) {
             distribution << ",gaussian_fit_pdf";
         }
+        if (result.gaussian_neyman.fully_valid) {
+            distribution << ",gaussian_fit_pdf_neyman";
+        }
+        if (result.gaussian_pearson.fully_valid) {
+            distribution << ",gaussian_fit_pdf_pearson";
+        }
         if (result.mixed.fully_valid) {
             // Backward-compatible default curve: Poisson mixed estimator.
             distribution << ",mixed_fit_pdf";
@@ -715,16 +722,27 @@ void write_shape_result(
                          << bin.center << ','
                          << bin.pdf << ','
                          << bin.counting_error_pdf;
-            if (result.gaussian.fully_valid) {
+            const std::size_t raw_bin = bin.bin_index;
+            const auto write_gaussian_pdf = [&](
+                const hbt::GaussianFitResult& gaussian
+            ) {
                 distribution << ',';
-                const std::size_t raw_bin = bin.bin_index;
                 if (result.gaussian_core_region.has_value() &&
                     raw_bin >= result.gaussian_core_region->first_bin &&
                     raw_bin <= result.gaussian_core_region->last_bin) {
                     const std::size_t fit_index =
                         raw_bin - result.gaussian_core_region->first_bin;
-                    distribution << result.gaussian.fitted_pdf[fit_index];
+                    distribution << gaussian.fitted_pdf[fit_index];
                 }
+            };
+            if (result.gaussian.fully_valid) {
+                write_gaussian_pdf(result.gaussian);
+            }
+            if (result.gaussian_neyman.fully_valid) {
+                write_gaussian_pdf(result.gaussian_neyman);
+            }
+            if (result.gaussian_pearson.fully_valid) {
+                write_gaussian_pdf(result.gaussian_pearson);
             }
             if (result.mixed.fully_valid) {
                 distribution << ',' << result.mixed.fitted_pdf[index];
@@ -745,16 +763,23 @@ void write_shape_result(
         "fit_parameters.csv"
     );
     write_parameter_header(parameters);
-    write_gaussian_row(
-        parameters,
-        product_index,
-        origin,
-        slice_index,
-        location,
-        result.gaussian,
-        result.gaussian_core_region,
-        binning
-    );
+    const std::array<const hbt::GaussianFitResult*, 3U> gaussian_outputs{{
+        &result.gaussian,
+        &result.gaussian_neyman,
+        &result.gaussian_pearson
+    }};
+    for (const hbt::GaussianFitResult* gaussian_ptr : gaussian_outputs) {
+        write_gaussian_row(
+            parameters,
+            product_index,
+            origin,
+            slice_index,
+            location,
+            *gaussian_ptr,
+            result.gaussian_core_region,
+            binning
+        );
+    }
     const std::array<const hbt::MixedFitResult*, 3U> mixed_outputs{{
         &result.mixed,
         &result.mixed_neyman,

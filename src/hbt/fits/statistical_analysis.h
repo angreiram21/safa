@@ -68,6 +68,33 @@ namespace hbt {
     double threshold_fraction = 0.10
 );
 
+
+/**
+ * @brief Derive a Gaussian-radius seed from the histogram half-maximum width.
+ * @param family OSL or radial physical model family.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param binning Validated uniform binning for the logical histogram.
+ * @param full_region Existing full selected shape region.
+ * @return Radius seed in the model's R parameterization, or std::nullopt when
+ *         the required half-maximum crossing(s) cannot be identified.
+ * @throws std::out_of_range If the logical histogram or region is unavailable.
+ *
+ * The half-height locations are linearly interpolated between neighboring bin
+ * centers. OSL histograms contain |x|, so the observed right half-maximum
+ * location is mirrored about zero to obtain FWHM and
+ * R = FWHM/(4 sqrt(ln 2)). Radial histograms use both measured crossings around
+ * the non-zero mode and R = FWHM/2.3098847205021675, the exact numerical width
+ * ratio of r^2 exp[-r^2/(4R^2)]. Raw counts and N_selected are never modified.
+ */
+[[nodiscard]] std::optional<double> half_maximum_radius_seed(
+    FitObservableFamily family,
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& full_region
+);
+
 /**
  * @brief Select the signed delta-t region around its modal plateau.
  * @param bins Slot-major raw histogram count storage.

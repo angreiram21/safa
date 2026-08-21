@@ -66,6 +66,21 @@ RADIAL_X_LABELS = {
 
 FRAMES = {"LAB", "LCMS", "PRF"}
 KINDS = {"osl", "radial", "dt"}
+MIXED_ESTIMATORS = ("poisson", "neyman", "pearson")
+
+
+def gaussian_pdf_column(estimator: str) -> str:
+    """Return the exported Gaussian-fit PDF column for *estimator*."""
+    if estimator == "poisson":
+        return "gaussian_fit_pdf"
+    return f"gaussian_fit_pdf_{estimator}"
+
+
+def mixed_pdf_column(estimator: str) -> str:
+    """Return the exported mixed-fit PDF column for *estimator*."""
+    if estimator == "poisson":
+        return "mixed_fit_pdf"
+    return f"mixed_fit_pdf_{estimator}"
 
 
 class PlotInputError(RuntimeError):
@@ -83,6 +98,15 @@ def parse_args() -> argparse.Namespace:
         "results_root",
         type=Path,
         help="path to the production-results root",
+    )
+    parser.add_argument(
+        "--estimator",
+        choices=MIXED_ESTIMATORS,
+        default="poisson",
+        help=(
+            "fit estimator to plot for both Gaussian and mixed curves; "
+            "default: poisson"
+        ),
     )
     parser.add_argument(
         "--plots-dir",
@@ -316,6 +340,7 @@ def plot_distribution(
     results_root: Path,
     plots_root: Path,
     product_labels: Dict[int, str],
+    estimator: str,
 ) -> Path:
     relative_path = distribution_path.relative_to(results_root)
     product_index = parse_product_index(relative_path)
@@ -348,8 +373,8 @@ def plot_distribution(
     centers = require_float_column(rows, "center", distribution_path)
     pdf = require_float_column(rows, "pdf", distribution_path)
     d_pdf = require_float_column(rows, "d_pdf", distribution_path)
-    gaussian = read_optional_float_column(rows, "gaussian_fit_pdf")
-    mixed = read_optional_float_column(rows, "mixed_fit_pdf")
+    gaussian = read_optional_float_column(rows, gaussian_pdf_column(estimator))
+    mixed = read_optional_float_column(rows, mixed_pdf_column(estimator))
 
     edges = [lower[0], *upper]
     band_lower = [value - error for value, error in zip(pdf, d_pdf)]
@@ -478,6 +503,7 @@ def main() -> int:
                 results_root,
                 plots_root,
                 product_labels,
+                args.estimator,
             )
     except PlotInputError as exc:
         print(f"error: {exc}", file=sys.stderr)

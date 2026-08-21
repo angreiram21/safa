@@ -23,11 +23,11 @@ enum class FitObservableFamily {
 };
 
 /**
- * @brief Statistical objective used to estimate mixed-model parameters.
+ * @brief Statistical objective used to estimate Gaussian and mixed parameters.
  *
- * Each estimator is minimized independently with its own five-start basin
- * search, MIGRAD state, consensus decision, and MINOS uncertainties. Results
- * from different estimators are never pooled into one consensus basin.
+ * Poisson, Neyman, and Pearson are fitted independently. Each estimator keeps
+ * its own deterministic starts, selected minimum, MIGRAD state, and MINOS
+ * uncertainties; numerical results are never pooled across estimators.
  */
 enum class FitEstimator {
     Poisson, ///< Binned Poisson deviance; production/default estimator.
@@ -44,9 +44,10 @@ enum class FitFailureReason {
     EmptyHistogram,          ///< No statistical region exists.
     InsufficientBins,        ///< K is smaller than P + 1.
     InsufficientStatistics,  ///< Radial mT slice is below the production cut.
-    InvalidMomentSeed,       ///< Required data-derived seed is invalid.
+    InvalidMomentSeed,       ///< Required data-derived moment seed is invalid.
+    InvalidHalfMaximumSeed,  ///< Required half-maximum radius seed is invalid.
     InvalidGaussianCoreAnchor, ///< Required Gaussian-core anchor is unavailable.
-    NoBasinConsensus,        ///< Fewer than four core starts agree on a basin.
+    NoBasinConsensus,        ///< Legacy diagnostic token; no longer an acceptance veto.
     ObjectiveEvaluation,     ///< Objective could not be evaluated.
     MigradInvalid,           ///< MIGRAD returned an invalid minimum.
     MigradCallLimit,         ///< MIGRAD exhausted its call budget.
@@ -221,14 +222,30 @@ constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 );
 
 /**
- * @brief Result of the one-parameter pure-Gaussian fit.
+ * @brief Result of one independent one-parameter pure-Gaussian fit.
+ *
+ * Two deterministic radius starts are attempted when available: the moment
+ * seed and the half-maximum-width seed converted to the model radius. The
+ * numerically valid MIGRAD solution with the smallest estimator objective is
+ * selected for MINOS. The Gaussian fit region remains the independently
+ * validated 10% core region.
  */
 struct GaussianFitResult {
-    bool fully_valid;                 ///< MIGRAD and required MINOS are valid.
+    /** Number of deterministic Gaussian MIGRAD starts. */
+    static constexpr std::size_t kStartCount = 2U;
+
+    bool fully_valid;                 ///< Selected MIGRAD and MINOS are valid.
     FitFailureReason failure_reason;  ///< Primary invalidity cause, if any.
-    MigradDiagnostic migrad;          ///< MIGRAD diagnostic for the only start.
-    MinosDiagnostic minos_radius;     ///< MINOS diagnostic for log(R).
-    std::optional<double> q_min;      ///< Selected minimum objective value.
+    FitEstimator estimator;           ///< Objective minimized by this fit only.
+    /// Diagnostics for moment and half-maximum starts, respectively.
+    std::array<MigradDiagnostic, kStartCount> starts;
+    std::size_t starts_attempted;      ///< Number of Gaussian starts actually run.
+    std::size_t valid_starts;          ///< Starts with valid evaluable MIGRAD state.
+    /// Zero-based start whose valid objective is the smallest found.
+    std::optional<std::size_t> selected_start;
+    MigradDiagnostic migrad;           ///< Selected minimum MIGRAD diagnostic.
+    MinosDiagnostic minos_radius;      ///< MINOS diagnostic for log(R).
+    std::optional<double> q_min;        ///< Smallest valid objective found.
     /// Physical R and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> radius;
     /// Valid fitted bin densities; empty when the fit is not fully valid.
@@ -236,36 +253,41 @@ struct GaussianFitResult {
 };
 
 /**
- * @brief Result of the three-parameter Gaussian-plus-exponential fit.
+ * @brief Result of one independent three-parameter mixed fit.
  *
- * Five deterministic core-anchored starts are attempted when the Gaussian
- * core anchor and moment-derived tail seed are available. Every start uses
- * the same R_core seed from the independently fitted Gaussian core and varies
- * only R_tail and f_core. `consensus_size` records the largest numerically
- * equivalent solution group. A physical mixed result is published only when
- * at least four of the five starts agree on the same basin. The configured
- * estimator objective is used only to select the best numerical realization
- * inside that estimator-local consensus basin.
+ * Thirty-six deterministic starts form the Cartesian product
+ *
+ * - R_core in {R_G, 0.5 R_HM, R_HM, 2 R_HM},
+ * - R_tail in {0.5 R_tail,mom, R_tail,mom, 2 R_tail,mom}, and
+ * - f_core in {0.25, 0.50, 0.75}.
+ *
+ * R_G always comes from the pure-Gaussian fit using the same estimator. Start
+ * indices use core-major, then tail-major, then fraction-major ordering:
+ * `index = (core_index * 3 + tail_index) * 3 + fraction_index`. Every
+ * numerically valid MIGRAD solution competes globally and the one with the
+ * smallest objective is selected for MINOS, even when reached by only one
+ * start. `consensus_size` is retained only as a diagnostic: it is the size of
+ * the same-basin group containing the selected minimum and never vetoes it.
  */
 struct MixedFitResult {
-    /// Number of deterministic Gaussian-core-anchored MIGRAD starts.
-    static constexpr std::size_t kCoreStartCount = 5U;
+    /** Number of deterministic Cartesian-product mixed MIGRAD starts. */
+    static constexpr std::size_t kCoreStartCount = 36U;
 
-    bool fully_valid;                 ///< Consensus fit and all MINOS are valid.
-    FitFailureReason failure_reason;  ///< Primary invalidity cause, if any.
-    FitEstimator estimator;           ///< Objective minimized by this fit only.
-    /// Diagnostics for the five deterministic Gaussian-core-anchored starts.
+    bool fully_valid;                  ///< Selected fit and all MINOS are valid.
+    FitFailureReason failure_reason;   ///< Primary invalidity cause, if any.
+    FitEstimator estimator;            ///< Objective minimized by this fit only.
+    /// Diagnostics for all 36 deterministic starts.
     std::array<MigradDiagnostic, kCoreStartCount> starts;
-    std::size_t starts_attempted;     ///< Number of core starts actually run.
-    std::size_t valid_starts;         ///< Starts with valid evaluable MIGRAD state.
-    std::size_t consensus_size;       ///< Starts assigned to selected basin.
-    /// Zero-based member of the consensus basin selected for MINOS.
+    std::size_t starts_attempted;      ///< Number of starts actually run.
+    std::size_t valid_starts;          ///< Starts with valid evaluable MIGRAD state.
+    std::size_t consensus_size;        ///< Same-basin multiplicity of selected minimum.
+    /// Zero-based start selected solely because it has the smallest valid q.
     std::optional<std::size_t> selected_core_start;
-    MigradDiagnostic selected_migrad; ///< Selected consensus MIGRAD diagnostic.
+    MigradDiagnostic selected_migrad;  ///< Selected minimum MIGRAD diagnostic.
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.
-    std::optional<double> q_min;       ///< Minimum estimator objective in basin.
+    std::optional<double> q_min;        ///< Smallest valid estimator objective found.
     /// Physical core radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_radius;
     /// Physical tail radius and asymmetric MINOS errors when fully valid.
@@ -287,7 +309,12 @@ struct ShapeHistogramResult {
     std::uint64_t selected_count;            ///< N over the full region.
     /// Final normalized distribution over the full statistical region.
     std::vector<NormalizedHistogramBin> normalized_bins;
-    GaussianFitResult gaussian;              ///< Truncated pure Gaussian core fit.
+    /// Truncated pure Gaussian fit using the default Poisson estimator.
+    GaussianFitResult gaussian;
+    /// Independent truncated pure Gaussian fit using Neyman chi-square.
+    GaussianFitResult gaussian_neyman;
+    /// Independent truncated pure Gaussian fit using Pearson chi-square.
+    GaussianFitResult gaussian_pearson;
     /// Full-range mixed fit using the default binned Poisson deviance.
     MixedFitResult mixed;
     /// Full-range mixed fit using Neyman chi-square as an independent estimator.

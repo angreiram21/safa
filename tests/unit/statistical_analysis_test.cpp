@@ -135,6 +135,51 @@ bool verify_osl_gaussian_core_region() {
 }
 
 /**
+ * @brief Verify OSL half-maximum width is converted to Gaussian R.
+ * @return true when the folded |x| crossing uses FWHM = 2*x_half.
+ */
+bool verify_osl_half_maximum_radius_seed() {
+    const hbt::HistogramBinningConfig binning{5U, 0.0, 5.0, 1.0};
+    const std::vector<std::uint64_t> bins{100U, 50U, 20U, 5U, 0U};
+    const hbt::StatisticalRegion region{0U, 3U, 175U};
+    const std::optional<double> seed = hbt::half_maximum_radius_seed(
+        hbt::FitObservableFamily::OSL,
+        bins,
+        0U,
+        binning,
+        region
+    );
+    const double expected = 1.5 / (2.0 * std::sqrt(std::log(2.0)));
+    if (!seed.has_value() || !close(seed.value(), expected)) {
+        return fail("OSL half-maximum width was not converted to model R");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify radial FWHM is converted to the radial Gaussian R.
+ * @return true when both measured half-height crossings are used.
+ */
+bool verify_radial_half_maximum_radius_seed() {
+    const hbt::HistogramBinningConfig binning{6U, 0.0, 6.0, 1.0};
+    const std::vector<std::uint64_t> bins{20U, 50U, 100U, 50U, 20U, 0U};
+    const hbt::StatisticalRegion region{0U, 4U, 240U};
+    const std::optional<double> seed = hbt::half_maximum_radius_seed(
+        hbt::FitObservableFamily::Radial,
+        bins,
+        0U,
+        binning,
+        region
+    );
+    constexpr double radial_fwhm_over_radius = 2.3098847205021675;
+    const double expected = 2.0 / radial_fwhm_over_radius;
+    if (!seed.has_value() || !close(seed.value(), expected)) {
+        return fail("radial half-maximum width was not converted to model R");
+    }
+    return true;
+}
+
+/**
  * @brief Verify the core selector falls back to the full safety region.
  * @return true when no threshold crossing invents an earlier cut.
  */
@@ -158,13 +203,13 @@ bool verify_gaussian_core_fallback() {
 }
 
 /**
- * @brief Verify numerical basin equivalence and 4-of-5 consensus grouping.
- * @return true when a lower-Q alternative basin cannot replace a 4-start group.
+ * @brief Verify numerical same-basin equivalence and connected grouping.
+ * @return true when four nearby endpoints form one diagnostic component.
  *
- * Q is intentionally absent from this pure grouping test: basin identity is
- * determined only by repeated convergence in the three mixed coordinates.
+ * Q is intentionally absent: this helper diagnoses repeated convergence only
+ * and no longer decides which mixed minimum is accepted.
  */
-bool verify_mixed_basin_consensus_grouping() {
+bool verify_mixed_basin_grouping() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
         {0.700, 2.000, 0.700},
         {0.704, 2.006, 0.696},
@@ -181,11 +226,11 @@ bool verify_mixed_basin_consensus_grouping() {
     const std::vector<std::size_t> consensus =
         hbt::largest_mixed_basin_group(endpoints, valid_indices);
     if (consensus.size() != 4U) {
-        return fail("mixed basin grouping did not preserve 4-of-5 consensus");
+        return fail("mixed basin grouping did not preserve the four-point component");
     }
     for (const std::size_t index : consensus) {
         if (index >= 4U) {
-            return fail("isolated alternative basin entered core consensus");
+            return fail("isolated alternative endpoint entered the grouped basin");
         }
     }
     return true;
@@ -329,8 +374,10 @@ int main() {
     if (!verify_shape_region() || !verify_shape_region_without_tail_cut() ||
         !verify_radial_gaussian_core_region() ||
         !verify_osl_gaussian_core_region() ||
+        !verify_osl_half_maximum_radius_seed() ||
+        !verify_radial_half_maximum_radius_seed() ||
         !verify_gaussian_core_fallback() ||
-        !verify_mixed_basin_consensus_grouping() ||
+        !verify_mixed_basin_grouping() ||
         !verify_empty_regions() || !verify_delta_t_region() ||
         !verify_normalization() || !verify_delta_t_statistics() ||
         !verify_invalid_delta_t_variance() ||

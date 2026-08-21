@@ -59,13 +59,25 @@ MinosDiagnostic unattempted_minos() {
 /**
  * @brief Build an invalid Gaussian result before any minimization.
  * @param reason Exact invalidity reason.
- * @return Empty numerical result carrying @p reason.
+ * @param estimator Statistical objective associated with the empty result.
+ * @return Empty numerical result carrying @p reason and @p estimator.
  */
-GaussianFitResult invalid_gaussian(FitFailureReason reason) {
+GaussianFitResult invalid_gaussian(
+    FitFailureReason reason,
+    FitEstimator estimator
+) {
+    const MigradDiagnostic empty = unattempted_migrad();
+    std::array<MigradDiagnostic, GaussianFitResult::kStartCount> starts{};
+    starts.fill(empty);
     return {
         false,
         reason,
-        unattempted_migrad(),
+        estimator,
+        starts,
+        0U,
+        0U,
+        std::nullopt,
+        empty,
         unattempted_minos(),
         std::nullopt,
         std::nullopt,
@@ -84,9 +96,8 @@ MixedFitResult invalid_mixed(
     FitEstimator estimator
 ) {
     const MigradDiagnostic empty = unattempted_migrad();
-    const std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{
-        empty, empty, empty, empty, empty
-    };
+    std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{};
+    starts.fill(empty);
     return {
         false,
         reason,
@@ -178,28 +189,31 @@ std::optional<RadiusSeeds> derive_radius_seeds(
 class GaussianObjective final : public ROOT::Minuit2::FCNBase {
 public:
     /**
-     * @brief Construct a synchronous Gaussian likelihood objective.
+     * @brief Construct a synchronous Gaussian estimator objective.
      * @param family OSL or radial physical family.
      * @param bins Borrowed raw uint64_t count storage.
      * @param offset First logical histogram counter.
      * @param binning Borrowed validated uniform binning.
      * @param region Selected contiguous statistical region, copied by value.
+     * @param estimator Statistical objective evaluated for this fit only.
      */
     GaussianObjective(
         FitObservableFamily family,
         const std::vector<std::uint64_t>& bins,
         std::size_t offset,
         const HistogramBinningConfig& binning,
-        StatisticalRegion region
+        StatisticalRegion region,
+        FitEstimator estimator
     )
         : family_(family),
           bins_(bins),
           offset_(offset),
           binning_(binning),
-          region_(region) {}
+          region_(region),
+          estimator_(estimator) {}
 
     /**
-     * @brief Evaluate -2 log L from one log-radius parameter.
+     * @brief Evaluate the configured objective from one log-radius parameter.
      * @param parameters Minuit external parameters; index zero is log(R).
      * @return Finite deviance, or the largest finite double for an invalid
      *         model evaluation. Returned minima are validated explicitly.
@@ -210,25 +224,36 @@ public:
         }
         const double radius = std::exp(parameters[0]);
         try {
-            return binned_poisson_deviance(
-                bins_,
-                offset_,
-                region_,
+            const std::vector<double> probabilities =
                 gaussian_bin_probabilities(
                     family_,
                     binning_,
                     region_,
                     radius
-                )
-            );
+                );
+            switch (estimator_) {
+                case FitEstimator::Poisson:
+                    return binned_poisson_deviance(
+                        bins_, offset_, region_, probabilities
+                    );
+                case FitEstimator::Neyman:
+                    return binned_neyman_chi_square(
+                        bins_, offset_, region_, probabilities
+                    );
+                case FitEstimator::Pearson:
+                    return binned_pearson_chi_square(
+                        bins_, offset_, region_, probabilities
+                    );
+            }
         } catch (const std::exception&) {
             return std::numeric_limits<double>::max();
         }
+        return std::numeric_limits<double>::max();
     }
 
     /**
-     * @brief Return Minuit error definition for a -2 log likelihood.
-     * @return Exactly 1.0 as required by the post-sample MINOS contract.
+     * @brief Return Minuit error definition for the configured objective.
+     * @return Exactly 1.0 for deviance or chi-square MINOS intervals.
      */
     double Up() const override {
         return 1.0;
@@ -240,6 +265,7 @@ private:
     std::size_t offset_; ///< First logical raw counter.
     const HistogramBinningConfig& binning_; ///< Borrowed binning metadata.
     StatisticalRegion region_; ///< Selected region copied by value.
+    FitEstimator estimator_; ///< Objective used only by this independent fit.
 };
 
 /**
@@ -472,16 +498,46 @@ FitParameterEstimate direct_parameter_estimate(
 }
 
 /**
- * @brief Execute one independent Gaussian-core-anchored mixed MIGRAD start.
+ * @brief Execute one independent pure-Gaussian MIGRAD start.
+ * @param objective Borrowed synchronous Minuit objective.
+ * @param radius_seed Strictly positive physical radius seed.
+ * @return FunctionMinimum plus its stable diagnostic.
+ */
+std::pair<FunctionMinimum, MigradDiagnostic> run_gaussian_migrad(
+    GaussianObjective& objective,
+    double radius_seed
+) {
+    MnUserParameters parameters;
+    parameters.Add("log_r", std::log(radius_seed), 0.1);
+    MnMigrad migrad(objective, parameters);
+    FunctionMinimum minimum = migrad();
+    const bool objective_failure =
+        !gaussian_minimum_is_evaluable(objective, minimum);
+    return {
+        minimum,
+        migrad_diagnostic(minimum, objective_failure)
+    };
+}
+
+/**
+ * @brief One completed deterministic Gaussian start retained until selection.
+ */
+struct GaussianStartOutcome {
+    FunctionMinimum minimum;      ///< Complete Minuit minimum for later MINOS.
+    MigradDiagnostic diagnostic;  ///< Stable serialized start diagnostic.
+};
+
+/**
+ * @brief Execute one independent mixed-model MIGRAD start.
  * @param objective Borrowed synchronous Minuit objective.
  * @param core_seed Strictly positive Gaussian core radius seed.
  * @param tail_seed Strictly positive exponential tail radius seed.
  * @param core_fraction_seed Initial Gaussian mixture fraction in (0,1).
  * @return FunctionMinimum plus its stable diagnostic.
  *
- * Every production mixed start shares the Gaussian-core seed and varies only
- * the tail scale and core fraction. Numerical parameter steps are Minuit
- * controls, not scientific configuration.
+ * Numerical parameter steps are Minuit controls, not scientific configuration.
+ * Scientific start values are supplied explicitly by the Cartesian-product
+ * caller.
  */
 std::pair<FunctionMinimum, MigradDiagnostic> run_mixed_migrad(
     MixedObjective& objective,
@@ -512,6 +568,38 @@ struct MixedStartOutcome {
     MixedBasinPoint endpoint;     ///< External endpoint for basin grouping.
 };
 
+/**
+ * @brief Count valid starts in the connected basin containing one start.
+ * @param outcomes Endpoints for every attempted start.
+ * @param valid_indices Indices with valid evaluable MIGRAD minima.
+ * @param selected_index Valid selected-minimum index.
+ * @return Connected same-basin component size containing @p selected_index.
+ */
+std::size_t selected_mixed_basin_size(
+    const std::vector<MixedStartOutcome>& outcomes,
+    const std::vector<std::size_t>& valid_indices,
+    std::size_t selected_index
+) {
+    std::vector<bool> visited(outcomes.size(), false);
+    std::vector<std::size_t> stack{selected_index};
+    visited[selected_index] = true;
+    std::size_t count = 0U;
+    while (!stack.empty()) {
+        const std::size_t current = stack.back();
+        stack.pop_back();
+        ++count;
+        for (const std::size_t candidate : valid_indices) {
+            if (!visited[candidate] && same_mixed_basin(
+                    outcomes[current].endpoint,
+                    outcomes[candidate].endpoint
+                )) {
+                visited[candidate] = true;
+                stack.push_back(candidate);
+            }
+        }
+    }
+    return count;
+}
 
 }  // namespace
 
@@ -520,46 +608,86 @@ GaussianFitResult fit_gaussian_model(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const HistogramBinningConfig& binning,
-    const StatisticalRegion& region
+    const StatisticalRegion& region,
+    FitEstimator estimator,
+    double half_maximum_seed
 ) {
     const std::size_t selected_bins =
         region.last_bin - region.first_bin + 1U;
     if (selected_bins < 2U || region.selected_count == 0U) {
-        return invalid_gaussian(FitFailureReason::InsufficientBins);
+        return invalid_gaussian(FitFailureReason::InsufficientBins, estimator);
     }
 
-    const std::optional<RadiusSeeds> seeds = derive_radius_seeds(
+    const std::optional<RadiusSeeds> moment_seeds = derive_radius_seeds(
         family,
         bins,
         offset,
         binning,
         region
     );
-    if (!seeds.has_value()) {
-        return invalid_gaussian(FitFailureReason::InvalidMomentSeed);
+    if (!moment_seeds.has_value()) {
+        return invalid_gaussian(FitFailureReason::InvalidMomentSeed, estimator);
+    }
+    if (!std::isfinite(half_maximum_seed) || half_maximum_seed <= 0.0) {
+        return invalid_gaussian(
+            FitFailureReason::InvalidHalfMaximumSeed,
+            estimator
+        );
     }
 
-    GaussianObjective objective(family, bins, offset, binning, region);
-    MnUserParameters parameters;
-    parameters.Add("log_r", std::log(seeds->gaussian), 0.1);
-    MnMigrad migrad(objective, parameters);
-    FunctionMinimum minimum = migrad();
-
+    const std::array<double, GaussianFitResult::kStartCount> radius_seeds{
+        moment_seeds->gaussian,
+        half_maximum_seed
+    };
     GaussianFitResult result = invalid_gaussian(
-        FitFailureReason::MigradInvalid
+        FitFailureReason::MigradInvalid,
+        estimator
     );
-    const bool objective_failure =
-        !gaussian_minimum_is_evaluable(objective, minimum);
-    result.migrad = migrad_diagnostic(minimum, objective_failure);
-    result.q_min = result.migrad.q_min;
-    const FitFailureReason migrad_reason =
-        fit_failure_from_migrad(result.migrad);
-    if (migrad_reason != FitFailureReason::None) {
-        result.failure_reason = migrad_reason;
+    std::vector<GaussianStartOutcome> outcomes;
+    outcomes.reserve(GaussianFitResult::kStartCount);
+    std::vector<std::size_t> valid_indices;
+    valid_indices.reserve(GaussianFitResult::kStartCount);
+
+    for (std::size_t index = 0U;
+         index < GaussianFitResult::kStartCount;
+         ++index) {
+        GaussianObjective objective(
+            family, bins, offset, binning, region, estimator
+        );
+        auto start = run_gaussian_migrad(objective, radius_seeds[index]);
+        result.starts[index] = start.second;
+        ++result.starts_attempted;
+        outcomes.push_back({std::move(start.first), start.second});
+        if (fit_failure_from_migrad(start.second) == FitFailureReason::None) {
+            valid_indices.push_back(index);
+        }
+    }
+    result.valid_starts = valid_indices.size();
+    if (valid_indices.empty()) {
+        for (const MigradDiagnostic& diagnostic : result.starts) {
+            const FitFailureReason reason = fit_failure_from_migrad(diagnostic);
+            if (reason == FitFailureReason::ObjectiveEvaluation) {
+                result.failure_reason = reason;
+                return result;
+            }
+        }
+        result.failure_reason = fit_failure_from_migrad(result.starts[0U]);
         return result;
     }
 
-    const double log_radius = minimum.UserState().Value(0U);
+    std::size_t selected_index = valid_indices.front();
+    for (const std::size_t index : valid_indices) {
+        if (outcomes[index].diagnostic.q_min.value() <
+            outcomes[selected_index].diagnostic.q_min.value()) {
+            selected_index = index;
+        }
+    }
+    result.selected_start = selected_index;
+    result.migrad = outcomes[selected_index].diagnostic;
+    result.q_min = result.migrad.q_min;
+
+    FunctionMinimum& selected = outcomes[selected_index].minimum;
+    const double log_radius = selected.UserState().Value(0U);
     const double radius = std::exp(log_radius);
     if (!std::isfinite(log_radius) || !std::isfinite(radius) ||
         radius <= 0.0 || !result.q_min.has_value()) {
@@ -580,7 +708,10 @@ GaussianFitResult fit_gaussian_model(
         return result;
     }
 
-    MnMinos minos(objective, minimum);
+    GaussianObjective selected_objective(
+        family, bins, offset, binning, region, estimator
+    );
+    MnMinos minos(selected_objective, selected);
     const MinosError radius_error = minos.Minos(0U);
     result.minos_radius = minos_diagnostic(radius_error);
     const FitFailureReason minos_reason = fit_failure_from_minos(
@@ -614,68 +745,91 @@ MixedFitResult fit_mixed_model(
     const HistogramBinningConfig& binning,
     const StatisticalRegion& region,
     FitEstimator estimator,
-    const GaussianFitResult& gaussian_result
+    const GaussianFitResult& gaussian_result,
+    double half_maximum_seed
 ) {
     const std::size_t selected_bins =
         region.last_bin - region.first_bin + 1U;
     if (selected_bins < 4U || region.selected_count == 0U) {
         return invalid_mixed(FitFailureReason::InsufficientBins, estimator);
     }
-    if (!gaussian_result.fully_valid || !gaussian_result.radius.has_value() ||
+    if (gaussian_result.estimator != estimator ||
+        !gaussian_result.fully_valid || !gaussian_result.radius.has_value() ||
         !std::isfinite(gaussian_result.radius->value) ||
         gaussian_result.radius->value <= 0.0) {
-        return invalid_mixed(FitFailureReason::InvalidGaussianCoreAnchor, estimator);
+        return invalid_mixed(
+            FitFailureReason::InvalidGaussianCoreAnchor,
+            estimator
+        );
+    }
+    if (!std::isfinite(half_maximum_seed) || half_maximum_seed <= 0.0) {
+        return invalid_mixed(
+            FitFailureReason::InvalidHalfMaximumSeed,
+            estimator
+        );
     }
 
-    const std::optional<RadiusSeeds> seeds = derive_radius_seeds(
+    const std::optional<RadiusSeeds> moment_seeds = derive_radius_seeds(
         family,
         bins,
         offset,
         binning,
         region
     );
-    if (!seeds.has_value()) {
+    if (!moment_seeds.has_value()) {
         return invalid_mixed(FitFailureReason::InvalidMomentSeed, estimator);
     }
 
-    const double core_seed = gaussian_result.radius->value;
-    const double tail_seed = seeds->exponential;
-    const std::array<double, MixedFitResult::kCoreStartCount> tail_scales{
-        1.0, 0.5, 2.0, 1.0, 1.0
+    const double gaussian_seed = gaussian_result.radius->value;
+    const double tail_moment_seed = moment_seeds->exponential;
+    const std::array<double, 4U> core_seeds{
+        gaussian_seed,
+        0.5 * half_maximum_seed,
+        half_maximum_seed,
+        2.0 * half_maximum_seed
     };
-    const std::array<double, MixedFitResult::kCoreStartCount> fractions{
-        0.50, 0.50, 0.50, 0.25, 0.75
-    };
+    const std::array<double, 3U> tail_scales{0.5, 1.0, 2.0};
+    const std::array<double, 3U> fractions{0.25, 0.50, 0.75};
 
-    MixedFitResult result = invalid_mixed(FitFailureReason::MigradInvalid, estimator);
+    MixedFitResult result = invalid_mixed(
+        FitFailureReason::MigradInvalid,
+        estimator
+    );
     std::vector<MixedStartOutcome> outcomes;
     outcomes.reserve(MixedFitResult::kCoreStartCount);
     std::vector<std::size_t> valid_indices;
     valid_indices.reserve(MixedFitResult::kCoreStartCount);
 
-    for (std::size_t index = 0U;
-         index < MixedFitResult::kCoreStartCount;
-         ++index) {
-        MixedObjective objective(
-            family, bins, offset, binning, region, estimator
-        );
-        auto start = run_mixed_migrad(
-            objective,
-            core_seed,
-            tail_seed * tail_scales[index],
-            fractions[index]
-        );
-        result.starts[index] = start.second;
-        ++result.starts_attempted;
+    std::size_t index = 0U;
+    for (const double core_seed : core_seeds) {
+        for (const double tail_scale : tail_scales) {
+            for (const double fraction : fractions) {
+                MixedObjective objective(
+                    family, bins, offset, binning, region, estimator
+                );
+                auto start = run_mixed_migrad(
+                    objective,
+                    core_seed,
+                    tail_moment_seed * tail_scale,
+                    fraction
+                );
+                result.starts[index] = start.second;
+                ++result.starts_attempted;
 
-        MixedBasinPoint endpoint{
-            start.first.UserState().Value(0U),
-            start.first.UserState().Value(1U),
-            start.first.UserState().Value(2U)
-        };
-        outcomes.push_back({std::move(start.first), start.second, endpoint});
-        if (fit_failure_from_migrad(start.second) == FitFailureReason::None) {
-            valid_indices.push_back(index);
+                MixedBasinPoint endpoint{
+                    start.first.UserState().Value(0U),
+                    start.first.UserState().Value(1U),
+                    start.first.UserState().Value(2U)
+                };
+                outcomes.push_back({
+                    std::move(start.first), start.second, endpoint
+                });
+                if (fit_failure_from_migrad(start.second) ==
+                    FitFailureReason::None) {
+                    valid_indices.push_back(index);
+                }
+                ++index;
+            }
         }
     }
     result.valid_starts = valid_indices.size();
@@ -691,31 +845,21 @@ MixedFitResult fit_mixed_model(
         return result;
     }
 
-    std::vector<MixedBasinPoint> endpoints;
-    endpoints.reserve(outcomes.size());
-    for (const MixedStartOutcome& outcome : outcomes) {
-        endpoints.push_back(outcome.endpoint);
-    }
-    const std::vector<std::size_t> consensus = largest_mixed_basin_group(
-        endpoints,
-        valid_indices
-    );
-    result.consensus_size = consensus.size();
-    if (consensus.size() < 4U) {
-        result.failure_reason = FitFailureReason::NoBasinConsensus;
-        return result;
-    }
-
-    std::size_t selected_index = consensus.front();
-    for (const std::size_t index : consensus) {
-        if (outcomes[index].diagnostic.q_min.value() <
+    std::size_t selected_index = valid_indices.front();
+    for (const std::size_t valid_index : valid_indices) {
+        if (outcomes[valid_index].diagnostic.q_min.value() <
             outcomes[selected_index].diagnostic.q_min.value()) {
-            selected_index = index;
+            selected_index = valid_index;
         }
     }
     result.selected_core_start = selected_index;
     result.selected_migrad = outcomes[selected_index].diagnostic;
     result.q_min = result.selected_migrad.q_min;
+    result.consensus_size = selected_mixed_basin_size(
+        outcomes,
+        valid_indices,
+        selected_index
+    );
 
     FunctionMinimum& selected = outcomes[selected_index].minimum;
     const double log_core = selected.UserState().Value(0U);

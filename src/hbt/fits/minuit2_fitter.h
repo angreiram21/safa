@@ -17,48 +17,53 @@
 namespace hbt {
 
 /**
- * @brief Fit the normalized pure-Gaussian shape model with MIGRAD and MINOS.
+ * @brief Fit one normalized pure-Gaussian estimator with MIGRAD and MINOS.
  * @param family OSL or radial physical model family.
  * @param bins Slot-major raw uint64_t histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated uniform binning for this histogram family.
- * @param region Selected contiguous statistical region.
- * @return Complete fit result including explicit failure diagnostics.
+ * @param region Validated 10%-core statistical region used by the Gaussian.
+ * @param estimator Statistical objective minimized by this independent fit.
+ * @param half_maximum_seed Gaussian R seed obtained from the half-maximum width
+ *        of the full selected histogram and converted to model R units.
+ * @return Complete fit result including both start diagnostics and MINOS.
  * @throws std::out_of_range If the selected raw slot is unavailable.
  *
- * The only free parameter is log(R), which makes R strictly positive without
- * arbitrary physical bounds. The objective uses raw counts and exact-bin
- * probabilities. MINOS is run only after a valid MIGRAD minimum.
+ * The two deterministic starts are the moment-derived Gaussian radius and
+ * @p half_maximum_seed. Both minimize the same estimator independently; the
+ * valid minimum with the smallest q is selected. The only free parameter is
+ * log(R), so R remains strictly positive without arbitrary physical bounds.
  */
 [[nodiscard]] GaussianFitResult fit_gaussian_model(
     FitObservableFamily family,
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const HistogramBinningConfig& binning,
-    const StatisticalRegion& region
+    const StatisticalRegion& region,
+    FitEstimator estimator,
+    double half_maximum_seed
 );
 
 /**
- * @brief Fit the normalized Gaussian-plus-exponential model.
+ * @brief Fit one normalized Gaussian-plus-exponential estimator.
  * @param family OSL or radial physical model family.
  * @param bins Slot-major raw uint64_t histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated uniform binning for this histogram family.
- * @param region Selected contiguous statistical region.
- * @param estimator Statistical objective minimized by this independent mixed fit.
- * @param gaussian_result Valid truncated Gaussian-core result from the same
- *        histogram and observable geometry. Its radius seeds every core start.
- * @return Complete consensus-multistart fit result and explicit diagnostics.
+ * @param region Full selected statistical region used by the mixed model.
+ * @param estimator Statistical objective minimized by this independent fit.
+ * @param gaussian_result Valid 10%-core Gaussian result from the same estimator;
+ *        its fitted radius provides the R_G member of the core-seed set.
+ * @param half_maximum_seed Gaussian R seed converted from histogram FWHM.
+ * @return Complete 36-start fit result and explicit diagnostics.
  * @throws std::out_of_range If the selected raw slot is unavailable.
  *
- * Five deterministic starts share R_core(0)=R_G^core from
- * @p gaussian_result. Their R_tail and f_core seeds are (R_tail,mom,0.50),
- * (0.5 R_tail,mom,0.50), (2 R_tail,mom,0.50), (R_tail,mom,0.25), and
- * (R_tail,mom,0.75). A result is publishable only when at least four starts
- * converge to the same numerical basin. The selected estimator objective
- * chooses the best realization only inside that estimator's consensus basin;
- * results from different estimators are never combined. No ordering of
- * R_core and R_tail is imposed.
+ * The deterministic Cartesian product is
+ * R_core={R_G,0.5R_HM,R_HM,2R_HM},
+ * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Every valid
+ * MIGRAD minimum competes directly; the smallest q is selected for MINOS even
+ * if only one start reaches its basin. Basin multiplicity is diagnostic only.
+ * No ordering of R_core and R_tail is imposed.
  */
 [[nodiscard]] MixedFitResult fit_mixed_model(
     FitObservableFamily family,
@@ -67,7 +72,8 @@ namespace hbt {
     const HistogramBinningConfig& binning,
     const StatisticalRegion& region,
     FitEstimator estimator,
-    const GaussianFitResult& gaussian_result
+    const GaussianFitResult& gaussian_result,
+    double half_maximum_seed
 );
 
 }  // namespace hbt

@@ -6,6 +6,7 @@
 #include "hbt/fits/binned_models.h"
 #include "hbt/fits/minuit2_fitter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -87,9 +88,14 @@ bool verify_gaussian_migrad_and_minos() {
         counts,
         0U,
         binning,
-        region
+        region,
+        hbt::FitEstimator::Poisson,
+        1.35
     );
-    if (!fit.fully_valid || !fit.migrad.attempted ||
+    if (fit.estimator != hbt::FitEstimator::Poisson ||
+        fit.starts_attempted != hbt::GaussianFitResult::kStartCount ||
+        fit.valid_starts == 0U || !fit.selected_start.has_value() ||
+        !fit.fully_valid || !fit.migrad.attempted ||
         !fit.migrad.valid || !fit.minos_radius.attempted ||
         !fit.minos_radius.lower_valid ||
         !fit.minos_radius.upper_valid || !fit.radius.has_value() ||
@@ -104,8 +110,8 @@ bool verify_gaussian_migrad_and_minos() {
 }
 
 /**
- * @brief Verify Gaussian-core-anchored mixed consensus and selected MINOS.
- * @return true when five deterministic core starts reach a publishable basin.
+ * @brief Verify estimator-local Gaussian starts and 36-start mixed selection.
+ * @return true when each estimator selects its smallest valid q and passes MINOS.
  */
 bool verify_mixed_multistart_and_minos() {
     const hbt::HistogramBinningConfig binning{20U, 0.0, 10.0, 2.0};
@@ -125,16 +131,7 @@ bool verify_mixed_multistart_and_minos() {
         19U,
         count_sum(counts)
     };
-    const hbt::GaussianFitResult gaussian = hbt::fit_gaussian_model(
-        hbt::FitObservableFamily::OSL,
-        counts,
-        0U,
-        binning,
-        region
-    );
-    if (!gaussian.fully_valid) {
-        return fail("mixed synthetic sample did not provide a valid Gaussian anchor");
-    }
+    const double half_maximum_seed = 0.90;
 
     const hbt::FitEstimator estimators[] = {
         hbt::FitEstimator::Poisson,
@@ -142,6 +139,33 @@ bool verify_mixed_multistart_and_minos() {
         hbt::FitEstimator::Pearson
     };
     for (const hbt::FitEstimator estimator : estimators) {
+        const hbt::GaussianFitResult gaussian = hbt::fit_gaussian_model(
+            hbt::FitObservableFamily::OSL,
+            counts,
+            0U,
+            binning,
+            region,
+            estimator,
+            half_maximum_seed
+        );
+        if (!gaussian.fully_valid || gaussian.estimator != estimator ||
+            gaussian.starts_attempted != hbt::GaussianFitResult::kStartCount ||
+            gaussian.valid_starts == 0U || !gaussian.selected_start.has_value()) {
+            return fail(
+                "mixed synthetic sample did not provide its estimator-local Gaussian anchor"
+            );
+        }
+        double gaussian_best = std::numeric_limits<double>::infinity();
+        for (const hbt::MigradDiagnostic& start : gaussian.starts) {
+            if (hbt::fit_failure_from_migrad(start) == hbt::FitFailureReason::None) {
+                gaussian_best = std::min(gaussian_best, start.q_min.value());
+            }
+        }
+        if (!gaussian.q_min.has_value() ||
+            std::fabs(gaussian.q_min.value() - gaussian_best) > 1.0e-10) {
+            return fail("Gaussian estimator did not select its smallest valid q");
+        }
+
         const hbt::MixedFitResult mixed = hbt::fit_mixed_model(
             hbt::FitObservableFamily::OSL,
             counts,
@@ -149,24 +173,31 @@ bool verify_mixed_multistart_and_minos() {
             binning,
             region,
             estimator,
-            gaussian
+            gaussian,
+            half_maximum_seed
         );
         if (mixed.estimator != estimator) {
             return fail("mixed result lost its estimator identity");
         }
         if (mixed.starts_attempted != hbt::MixedFitResult::kCoreStartCount ||
-            mixed.valid_starts < 4U || mixed.consensus_size < 4U ||
+            mixed.valid_starts == 0U ||
             !mixed.selected_core_start.has_value()) {
-            return fail(
-                "mixed estimator did not establish five-start basin consensus"
-            );
+            return fail("mixed estimator did not execute its 36-start search");
         }
         for (const hbt::MigradDiagnostic& start : mixed.starts) {
             if (!start.attempted) {
-                return fail(
-                    "mixed estimator did not attempt all five core starts"
-                );
+                return fail("mixed estimator did not attempt all 36 starts");
             }
+        }
+        double best = std::numeric_limits<double>::infinity();
+        for (const hbt::MigradDiagnostic& start : mixed.starts) {
+            if (hbt::fit_failure_from_migrad(start) == hbt::FitFailureReason::None) {
+                best = std::min(best, start.q_min.value());
+            }
+        }
+        if (!mixed.q_min.has_value() ||
+            std::fabs(mixed.q_min.value() - best) > 1.0e-10) {
+            return fail("mixed estimator did not select the smallest valid q");
         }
         if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
             !mixed.tail_radius.has_value() ||
@@ -351,7 +382,9 @@ bool verify_insufficient_bins_are_reported() {
         counts,
         0U,
         binning,
-        one_bin
+        one_bin,
+        hbt::FitEstimator::Poisson,
+        1.0
     );
     if (gaussian.fully_valid ||
         gaussian.failure_reason != hbt::FitFailureReason::InsufficientBins ||
@@ -367,7 +400,8 @@ bool verify_insufficient_bins_are_reported() {
         binning,
         three_bins,
         hbt::FitEstimator::Poisson,
-        gaussian
+        gaussian,
+        1.0
     );
     if (mixed.fully_valid ||
         mixed.failure_reason != hbt::FitFailureReason::InsufficientBins ||

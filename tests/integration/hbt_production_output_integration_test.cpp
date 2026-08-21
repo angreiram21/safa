@@ -170,9 +170,9 @@ bool verify_analysis_and_output() {
         global.delta_t.bins[bin] = delta_counts[bin];
     }
 
-    // Populate one radial mT slice below the provisional production quality
-    // cut. The distribution is non-empty and normalizable, but neither the
-    // Gaussian nor mixed result may be published as conclusive.
+    // Populate one radial mT slice below the historical 10000-count threshold.
+    // With the retained threshold machinery set to zero, this slice must now
+    // attempt all Gaussian and mixed fits rather than being vetoed pre-fit.
     hbt::RawHistogramSet& low_stat_slice =
         raw.products[0U].origins[0U].slices[0U];
     const std::vector<double> radial_probabilities =
@@ -200,8 +200,12 @@ bool verify_analysis_and_output() {
     const hbt::ShapeHistogramResult& shape =
         derived.products[0U].origins[0U].global.osl[0U];
     if (!shape.region.has_value() || shape.normalized_bins.size() != 20U ||
-        !shape.gaussian.fully_valid || !shape.mixed.fully_valid ||
+        !shape.gaussian.fully_valid || !shape.gaussian_neyman.fully_valid ||
+        !shape.gaussian_pearson.fully_valid || !shape.mixed.fully_valid ||
         !shape.mixed_neyman.fully_valid || !shape.mixed_pearson.fully_valid ||
+        shape.gaussian.estimator != hbt::FitEstimator::Poisson ||
+        shape.gaussian_neyman.estimator != hbt::FitEstimator::Neyman ||
+        shape.gaussian_pearson.estimator != hbt::FitEstimator::Pearson ||
         shape.mixed.estimator != hbt::FitEstimator::Poisson ||
         shape.mixed_neyman.estimator != hbt::FitEstimator::Neyman ||
         shape.mixed_pearson.estimator != hbt::FitEstimator::Pearson) {
@@ -219,6 +223,10 @@ bool verify_analysis_and_output() {
         derived.products[0U].origins[0U].slices[0U].osl[0U];
     if (slice_osl.gaussian.failure_reason !=
             hbt::FitFailureReason::NotApplicable ||
+        slice_osl.gaussian_neyman.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
+        slice_osl.gaussian_pearson.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
         slice_osl.mixed.failure_reason !=
             hbt::FitFailureReason::NotApplicable ||
         slice_osl.mixed_neyman.failure_reason !=
@@ -226,6 +234,8 @@ bool verify_analysis_and_output() {
         slice_osl.mixed_pearson.failure_reason !=
             hbt::FitFailureReason::NotApplicable ||
         slice_osl.gaussian.migrad.attempted ||
+        slice_osl.gaussian_neyman.migrad.attempted ||
+        slice_osl.gaussian_pearson.migrad.attempted ||
         slice_osl.mixed.starts_attempted != 0U ||
         slice_osl.mixed_neyman.starts_attempted != 0U ||
         slice_osl.mixed_pearson.starts_attempted != 0U) {
@@ -236,19 +246,31 @@ bool verify_analysis_and_output() {
         derived.products[0U].origins[0U].slices[0U].radial[0U];
     if (!low_stat_radial.region.has_value() ||
         low_stat_radial.selected_count >= 10000U ||
-        low_stat_radial.gaussian.fully_valid ||
-        low_stat_radial.mixed.fully_valid ||
-        low_stat_radial.mixed_neyman.fully_valid ||
-        low_stat_radial.mixed_pearson.fully_valid ||
-        low_stat_radial.gaussian.failure_reason !=
+        low_stat_radial.gaussian.failure_reason ==
             hbt::FitFailureReason::InsufficientStatistics ||
-        low_stat_radial.mixed.failure_reason !=
+        low_stat_radial.gaussian_neyman.failure_reason ==
             hbt::FitFailureReason::InsufficientStatistics ||
-        low_stat_radial.mixed_neyman.failure_reason !=
+        low_stat_radial.gaussian_pearson.failure_reason ==
             hbt::FitFailureReason::InsufficientStatistics ||
-        low_stat_radial.mixed_pearson.failure_reason !=
-            hbt::FitFailureReason::InsufficientStatistics) {
-        return fail("radial mT low-statistics quality cut was not enforced");
+        low_stat_radial.mixed.failure_reason ==
+            hbt::FitFailureReason::InsufficientStatistics ||
+        low_stat_radial.mixed_neyman.failure_reason ==
+            hbt::FitFailureReason::InsufficientStatistics ||
+        low_stat_radial.mixed_pearson.failure_reason ==
+            hbt::FitFailureReason::InsufficientStatistics ||
+        low_stat_radial.gaussian.starts_attempted !=
+            hbt::GaussianFitResult::kStartCount ||
+        low_stat_radial.gaussian_neyman.starts_attempted !=
+            hbt::GaussianFitResult::kStartCount ||
+        low_stat_radial.gaussian_pearson.starts_attempted !=
+            hbt::GaussianFitResult::kStartCount ||
+        low_stat_radial.mixed.starts_attempted !=
+            hbt::MixedFitResult::kCoreStartCount ||
+        low_stat_radial.mixed_neyman.starts_attempted !=
+            hbt::MixedFitResult::kCoreStartCount ||
+        low_stat_radial.mixed_pearson.starts_attempted !=
+            hbt::MixedFitResult::kCoreStartCount) {
+        return fail("radial mT threshold zero did not allow the low-count fits");
     }
 
     const std::filesystem::path root =
@@ -327,6 +349,8 @@ bool verify_analysis_and_output() {
     const std::string valid_distribution =
         read_text(lcms_out / "distribution.csv");
     if (valid_distribution.find("gaussian_fit_pdf") == std::string::npos ||
+        valid_distribution.find("gaussian_fit_pdf_neyman") == std::string::npos ||
+        valid_distribution.find("gaussian_fit_pdf_pearson") == std::string::npos ||
         valid_distribution.find("mixed_fit_pdf") == std::string::npos ||
         valid_distribution.find("mixed_fit_pdf_neyman") == std::string::npos ||
         valid_distribution.find("mixed_fit_pdf_pearson") == std::string::npos) {
@@ -371,6 +395,7 @@ bool verify_analysis_and_output() {
         valid_parameters.find("consensus_size") == std::string::npos ||
         valid_parameters.find("core_start0_valid") == std::string::npos ||
         valid_parameters.find("core_start4_valid") == std::string::npos ||
+        valid_parameters.find("core_start35_valid") == std::string::npos ||
         valid_parameters.find("tail_below_core") != std::string::npos ||
         valid_parameters.find("start_a_valid") != std::string::npos ||
         valid_parameters.find("start_b_valid") != std::string::npos) {
@@ -402,10 +427,10 @@ bool verify_analysis_and_output() {
     const std::string low_stat_parameters = read_text(
         slice0 / "LCMS" / "radial" / "r_radial" / "fit_parameters.csv"
     );
-    if (low_stat_parameters.find("insufficient_statistics") ==
+    if (low_stat_parameters.find("insufficient_statistics") !=
         std::string::npos) {
         std::filesystem::remove_all(root);
-        return fail("low-statistics radial slice lost its explicit status");
+        return fail("threshold-zero radial slice was still rejected by count");
     }
 
     for (const auto& entry :

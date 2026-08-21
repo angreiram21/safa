@@ -168,6 +168,39 @@ std::vector<long double> nonincreasing_pava(
     return levels;
 }
 
+/**
+ * @brief Linearly interpolate one half-height crossing between bin centers.
+ * @param x0 Center of the first bracketing bin.
+ * @param y0 Count in the first bracketing bin.
+ * @param x1 Center of the second bracketing bin.
+ * @param y1 Count in the second bracketing bin.
+ * @param half Target half-maximum count level.
+ * @return Finite crossing coordinate, or std::nullopt for a degenerate pair.
+ */
+std::optional<double> interpolate_half_crossing(
+    double x0,
+    long double y0,
+    double x1,
+    long double y1,
+    long double half
+) {
+    const long double denominator = y1 - y0;
+    if (denominator == 0.0L) {
+        return std::nullopt;
+    }
+    const long double fraction = (half - y0) / denominator;
+    if (fraction < 0.0L || fraction > 1.0L) {
+        return std::nullopt;
+    }
+    const long double crossing = static_cast<long double>(x0) + fraction *
+        (static_cast<long double>(x1) - static_cast<long double>(x0));
+    const double value = static_cast<double>(crossing);
+    if (!std::isfinite(value)) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 }  // namespace
 
 std::optional<StatisticalRegion> select_shape_region(
@@ -294,6 +327,105 @@ std::optional<StatisticalRegion> select_gaussian_core_region(
         return std::nullopt;
     }
     return StatisticalRegion{0U, last, sum_region(bins, offset, 0U, last)};
+}
+
+std::optional<double> half_maximum_radius_seed(
+    FitObservableFamily family,
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& full_region
+) {
+    require_slot_range(bins, offset, binning.nbins);
+    if (full_region.first_bin != 0U ||
+        full_region.last_bin >= binning.nbins ||
+        full_region.selected_count == 0U) {
+        throw std::out_of_range(
+            "HBT half-maximum seed: full shape region is invalid"
+        );
+    }
+
+    const auto mode = modal_plateau(
+        bins,
+        offset,
+        full_region.last_bin + 1U
+    );
+    const long double maximum = static_cast<long double>(
+        bins[offset + mode.first]
+    );
+    if (!(maximum > 0.0L)) {
+        return std::nullopt;
+    }
+    const long double half = 0.5L * maximum;
+
+    std::optional<double> right_crossing;
+    for (std::size_t bin = mode.second + 1U;
+         bin <= full_region.last_bin;
+         ++bin) {
+        const long double right = static_cast<long double>(bins[offset + bin]);
+        if (right <= half) {
+            const std::size_t previous = bin - 1U;
+            right_crossing = interpolate_half_crossing(
+                histogram_bin_center(binning, previous),
+                static_cast<long double>(bins[offset + previous]),
+                histogram_bin_center(binning, bin),
+                right,
+                half
+            );
+            break;
+        }
+    }
+    if (!right_crossing.has_value()) {
+        return std::nullopt;
+    }
+
+    constexpr double kSqrtLn2 = 0.83255461115769775635;
+    constexpr double kRadialFwhmOverRadius = 2.3098847205021675;
+    double radius = 0.0;
+    switch (family) {
+        case FitObservableFamily::OSL: {
+            // The stored observable is |x|. Mirroring the positive crossing
+            // gives FWHM = 2*x_half for a zero-centered Gaussian.
+            const double fwhm = 2.0 * right_crossing.value();
+            radius = fwhm / (4.0 * kSqrtLn2);
+            break;
+        }
+        case FitObservableFamily::Radial: {
+            if (mode.first == 0U) {
+                return std::nullopt;
+            }
+            std::optional<double> left_crossing;
+            for (std::size_t bin = mode.first; bin > 0U; --bin) {
+                const std::size_t left_bin = bin - 1U;
+                const long double left = static_cast<long double>(
+                    bins[offset + left_bin]
+                );
+                if (left <= half) {
+                    left_crossing = interpolate_half_crossing(
+                        histogram_bin_center(binning, left_bin),
+                        left,
+                        histogram_bin_center(binning, bin),
+                        static_cast<long double>(bins[offset + bin]),
+                        half
+                    );
+                    break;
+                }
+            }
+            if (!left_crossing.has_value() ||
+                right_crossing.value() <= left_crossing.value()) {
+                return std::nullopt;
+            }
+            const double fwhm =
+                right_crossing.value() - left_crossing.value();
+            radius = fwhm / kRadialFwhmOverRadius;
+            break;
+        }
+    }
+
+    if (!std::isfinite(radius) || radius <= 0.0) {
+        return std::nullopt;
+    }
+    return radius;
 }
 
 std::optional<StatisticalRegion> select_delta_t_region(

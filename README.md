@@ -913,36 +913,35 @@ scientific epsilon, post-hoc renormalization, or free fit amplitude.
 ### ROOT/Minuit2 fitting
 
 The pure Gaussian fit has one physical parameter, `R > 0`, represented through
-a log-radius parameter. It runs MIGRAD followed by MINOS on the compact core
-region and reports `R_G^core` with asymmetric physical MINOS errors. The mixed
-model remains fitted over the full statistical region.
+a log-radius parameter. Poisson, Neyman and Pearson are fitted independently on
+the same compact 10%-core region. Each estimator runs two deterministic starts:
+the moment-derived Gaussian radius and `R_HM`, obtained by linearly interpolating
+the histogram half-maximum crossing(s) and converting the measured FWHM to the
+model radius. Among valid MIGRAD minima the smallest objective value is selected
+for MINOS. The mixed model remains fitted over the full statistical region.
 
 The mixed model fits `R_core > 0`, `R_tail > 0` and `f_core` in `[0,1]`. No
 ordering between `R_core` and `R_tail` is imposed or used as a validity
-criterion. Five deterministic starts share
-`R_core(0) = R_G^core` from the matching Gaussian fit and use the
-moment-derived tail scale with `(R_tail scale, f_core)` seeds
-`(1,0.50)`, `(0.5,0.50)`, `(2,0.50)`, `(1,0.25)`, and `(1,0.75)`.
+criterion. Each estimator runs 36 deterministic starts, the Cartesian product
+of `R_core = {R_G, 0.5 R_HM, R_HM, 2 R_HM}`,
+`R_tail = {0.5, 1, 2} R_tail,mom` and
+`f_core = {0.25, 0.50, 0.75}`. The `R_G` seed always comes from the pure
+Gaussian fit using the same estimator. Poisson, Neyman and Pearson therefore
+remain completely independent.
 
-Converged starts are assigned to numerical basins in
-`(log(R_core), log(R_tail), f_core)` using documented convergence tolerances.
-Poisson, Neyman, and Pearson each run their own five starts, basin grouping,
-consensus decision, MIGRAD state, and MINOS calculation; starts from different
-estimators are never pooled. A mixed result is publishable only when at least
-four of the five starts for that estimator belong to the same basin. The
-smallest value of that estimator's objective is used only to choose the
-numerical realization inside its consensus basin; it is never used to select
-between distinct basins. MINOS runs only on the selected consensus realization.
-Poisson remains the default estimator used by existing plotting columns.
+Every numerically valid mixed MIGRAD minimum competes directly and the smallest
+objective value found is selected, even if only one start reaches that basin.
+Numerical basin multiplicity is retained only as a stability diagnostic and is
+not an acceptance veto. MINOS runs only on the selected minimum. Poisson remains
+the default estimator used by backward-compatible plotting columns.
 
-One-dimensional radial mT slices use a provisional production quality cut of
-`N_selected >= 10000`. Below that count both Gaussian and mixed fits are marked
-`insufficient_statistics`. The empirical cut is not imposed on global fits, OSL
-fits, kT-only slices, or Cartesian kT x mT cells.
-Invalid MIGRAD/MINOS or covariance states, degenerate core fractions, missing
-Gaussian anchors, absent basin consensus, invalid objectives and insufficient
-regions are preserved as explicit status/failure information. An invalid fit
-does not fabricate parameter estimates or fit curves.
+The one-dimensional radial-mT count-threshold machinery is retained, but its
+current value is `N_selected >= 0`, so no non-empty slice is vetoed by this
+criterion. `N_selected` itself and its histogram-selection definition are
+unchanged. Invalid MIGRAD/MINOS or covariance states, degenerate core fractions,
+missing Gaussian anchors, invalid half-maximum seeds, invalid objectives and
+insufficient regions are preserved explicitly. An invalid fit does not fabricate
+parameter estimates or fit curves.
 
 ### Signed delta-t statistics
 
@@ -1256,13 +1255,15 @@ written when a statistical region exists. Distribution columns contain the
 normalized `pdf` and `d_pdf`, plus Gaussian and/or mixed fitted PDF columns only
 when the corresponding fit is fully valid. Gaussian fitted values are written
 only inside the compact Gaussian-core region. The backward-compatible
-`mixed_fit_pdf` column is the Poisson mixed curve; valid alternative curves are
-written as `mixed_fit_pdf_neyman` and `mixed_fit_pdf_pearson`. All mixed curves
-span the full statistical region. The parameter table contains an explicit
-`estimator` column. It records the exact region used by each fit, Gaussian
-`R_G_core`, and independent Poisson/Neyman/Pearson mixed `R_core`, `R_tail`, and
-`f_core` values, asymmetric MINOS errors, objective minimum, covariance state,
-all five core-start diagnostics, and estimator-local basin-consensus metadata.
+`gaussian_fit_pdf` and `mixed_fit_pdf` columns are the Poisson curves; valid
+alternatives are written as `gaussian_fit_pdf_neyman`,
+`gaussian_fit_pdf_pearson`, `mixed_fit_pdf_neyman` and
+`mixed_fit_pdf_pearson`. All mixed curves span the full statistical region. The
+parameter table contains an explicit `estimator` column. It records the exact
+region used by each fit, independent Poisson/Neyman/Pearson Gaussian `R_G_core`,
+and independent mixed `R_core`, `R_tail`, and `f_core` values, asymmetric MINOS
+errors, objective minima, covariance state, all 36 mixed-start diagnostics, and
+the selected-minimum basin multiplicity diagnostic.
 Delta-t directories contain
 `statistics.csv` with status, `N_selected`, mean, sigma and sigma error and,
 when a region exists, `distribution.csv`.
@@ -1300,9 +1301,10 @@ Each `pair_slice_counts` entry stores zero-based `kt_slice_index` and
 disabled axis is serialized with the stable index token `none`; retained
 validated bin edges are still serialized exactly from the run configuration.
 
-The provisional `N_selected >= 10000` cut remains unchanged in this version and
-is still applied only to one-dimensional radial mT slices. Adding alternative
-estimators does not relax or extend that quality cut.
+The radial-mT `N_selected` threshold machinery remains in place but is currently
+set to zero. This allows all non-empty radial mT slices to attempt the fits while
+preserving the same code path for future threshold studies such as 1000, 5000 or
+10000.
 
 `histogram_range_warnings` contains one aggregate entry only for each logical
 histogram with non-zero underflow or overflow. Entries identify the final
@@ -1316,15 +1318,22 @@ Scientific modules do not directly serialize or write analysis outputs.
 
 `scripts/plot_results.py` renders the production CSV tree with Python and
 Matplotlib. It is a presentation-only tool: it reads exported `pdf`, `d_pdf`,
-`gaussian_fit_pdf`, and the backward-compatible Poisson `mixed_fit_pdf` values
-and does not refit, renormalize, interpolate, or reconstruct scientific
-results. The additional Neyman/Pearson mixed curves remain available in the CSV
-for dedicated estimator-comparison plots.
+the Gaussian and mixed fitted-PDF columns for the selected estimator and does
+not refit, renormalize, interpolate, or reconstruct scientific results. Use
+`--estimator {poisson,neyman,pearson}` to select both independently fitted
+Gaussian and mixed estimators; `poisson` remains the default for backward
+compatibility.
 
 ```bash
 python scripts/plot_results.py /path/to/results
-python scripts/plot_results.py /path/to/results --plots-dir /path/to/figures
+python scripts/plot_results.py /path/to/results --estimator neyman
+python scripts/plot_results.py /path/to/results --estimator pearson --plots-dir /path/to/figures
 ```
+
+`scripts/plot_paper_figures.py` accepts the same `--estimator` option. It uses
+the corresponding Gaussian and mixed curves for Figures 2--4 and 7--8 and the
+matching mixed `R_core` rows in `fit_parameters.csv` for Figure 9. Figure styles
+and layouts are estimator-independent.
 
 If `--plots-dir` is omitted, the script writes to a sibling directory named
 `<results_root>_plots`. Matplotlib must already be installed in the Python
@@ -1387,10 +1396,10 @@ The standard CTest suite contains 51 tests covering:
 - unit-normalized model probabilities plus binned Poisson deviance, Neyman
   chi-square and Pearson chi-square, including their documented zero-count
   semantics and explicit probability-normalization validation;
-- compact-core Gaussian fitting and independent Poisson/Neyman/Pearson
-  five-start Gaussian-anchored mixed Minuit2 fits, estimator-local basin
-  consensus, MIGRAD/covariance/MINOS diagnostics, asymmetric physical errors
-  and explicit invalid-fit reporting;
+- compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
+  and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
+  select the smallest valid objective, retain basin multiplicity diagnostically,
+  and validate MIGRAD/covariance/MINOS states and asymmetric physical errors;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`
   traceability metadata, fit/statistics CSVs and omission of invalid fit curves;
