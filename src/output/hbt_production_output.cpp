@@ -433,6 +433,26 @@ void write_minos_fields(
 }
 
 /**
+ * @brief Write HESSE fallback status fields for one completed fit.
+ * @param output Destination CSV stream.
+ * @param diagnostic Stable fit-level HESSE diagnostic.
+ */
+void write_hesse_fields(
+    std::ostream& output,
+    const hbt::HesseDiagnostic& diagnostic
+) {
+    output << ',';
+    write_bool(output, diagnostic.attempted);
+    output << ',';
+    write_bool(output, diagnostic.state_valid);
+    output << ',';
+    write_bool(output, diagnostic.hesse_failed);
+    output << ',';
+    write_bool(output, diagnostic.valid_covariance);
+    output << ',' << diagnostic.covariance_status;
+}
+
+/**
  * @brief Write MIGRAD fields for one independent start.
  * @param output Destination CSV stream.
  * @param diagnostic Stable MIGRAD diagnostic.
@@ -474,6 +494,8 @@ void write_parameter_header(std::ostream& output) {
         << "minos_at_lower_limit,minos_at_upper_limit,"
         << "minos_lower_call_limit,minos_upper_call_limit,"
         << "minos_lower_new_minimum,minos_upper_new_minimum,"
+        << "error_method,hesse_attempted,hesse_state_valid,hesse_failed,"
+        << "hesse_valid_covariance,hesse_covariance_status,"
         << "core_starts_attempted,valid_core_starts,consensus_size,"
         << "selected_core_start";
     for (std::size_t index = 0U;
@@ -571,6 +593,8 @@ void write_gaussian_row(
     write_fit_region_fields(output, fit_region, binning);
     write_migrad_fields(output, result.migrad);
     write_minos_fields(output, result.minos_radius);
+    output << ',' << hbt::fit_error_method_token(result.error_method);
+    write_hesse_fields(output, result.hesse);
     write_empty_mixed_fields(output);
     output << '\n';
 }
@@ -649,6 +673,8 @@ void write_mixed_row(
     write_fit_region_fields(output, fit_region, binning);
     write_migrad_fields(output, result.selected_migrad);
     write_minos_fields(output, minos);
+    output << ',' << hbt::fit_error_method_token(result.error_method);
+    write_hesse_fields(output, result.hesse);
     write_mixed_shared_fields(output, result);
     output << '\n';
 }

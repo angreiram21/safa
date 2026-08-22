@@ -1,6 +1,6 @@
 /**
  * @file minuit2_fitter_test.cpp
- * @brief Focused MIGRAD, multistart, and MINOS tests for post-sample analysis.
+ * @brief Focused MIGRAD, multistart, MINOS, and HESSE tests for HBT analysis.
  */
 
 #include "hbt/fits/binned_models.h"
@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace {
@@ -63,7 +64,7 @@ std::uint64_t count_sum(const std::vector<std::uint64_t>& counts) {
 }
 
 /**
- * @brief Verify the pure Gaussian fit requires valid MIGRAD and MINOS.
+ * @brief Verify a regular Gaussian fit publishes MINOS without HESSE fallback.
  * @return true when a deterministic exact-model sample is fully valid.
  */
 bool verify_gaussian_migrad_and_minos() {
@@ -98,9 +99,11 @@ bool verify_gaussian_migrad_and_minos() {
         !fit.fully_valid || !fit.migrad.attempted ||
         !fit.migrad.valid || !fit.minos_radius.attempted ||
         !fit.minos_radius.lower_valid ||
-        !fit.minos_radius.upper_valid || !fit.radius.has_value() ||
-        !fit.q_min.has_value() || fit.fitted_pdf.size() != 20U) {
-        return fail("exact Gaussian sample did not pass MIGRAD and MINOS");
+        !fit.minos_radius.upper_valid || fit.hesse.attempted ||
+        fit.error_method != hbt::FitErrorMethod::Minos ||
+        !fit.radius.has_value() || !fit.q_min.has_value() ||
+        fit.fitted_pdf.size() != 20U) {
+        return fail("exact Gaussian sample did not retain successful MINOS");
     }
     if (fit.radius->value <= 0.0 || fit.radius->lower_error < 0.0 ||
         fit.radius->upper_error < 0.0) {
@@ -111,7 +114,7 @@ bool verify_gaussian_migrad_and_minos() {
 
 /**
  * @brief Verify estimator-local Gaussian starts and 36-start mixed selection.
- * @return true when each estimator applies its documented selection and MINOS.
+ * @return true when each estimator applies selection and its preferred MINOS path.
  */
 bool verify_mixed_multistart_and_minos() {
     const hbt::HistogramBinningConfig binning{20U, 0.0, 10.0, 2.0};
@@ -214,9 +217,10 @@ bool verify_mixed_multistart_and_minos() {
             !mixed.minos_tail_radius.lower_valid ||
             !mixed.minos_tail_radius.upper_valid ||
             !mixed.minos_core_fraction.lower_valid ||
-            !mixed.minos_core_fraction.upper_valid) {
+            !mixed.minos_core_fraction.upper_valid || mixed.hesse.attempted ||
+            mixed.error_method != hbt::FitErrorMethod::Minos) {
             return fail(
-                "selected mixed estimator minimum did not pass required MINOS"
+                "selected mixed estimator minimum did not retain successful MINOS"
             );
         }
         if (mixed.core_fraction->value <= 0.0 ||
@@ -353,6 +357,39 @@ bool verify_minos_failure_classification() {
 }
 
 /**
+ * @brief Verify deterministic HESSE fallback-state classification and tokens.
+ * @return true when only a valid local covariance state is accepted.
+ */
+bool verify_hesse_failure_classification() {
+    const hbt::HesseDiagnostic valid{true, true, false, true, 3};
+    if (hbt::fit_failure_from_hesse(valid) != hbt::FitFailureReason::None ||
+        std::string(hbt::fit_error_method_token(hbt::FitErrorMethod::Hesse)) !=
+            "hesse") {
+        return fail("valid HESSE fallback was not accepted deterministically");
+    }
+
+    hbt::HesseDiagnostic diagnostic = valid;
+    diagnostic.hesse_failed = true;
+    if (hbt::fit_failure_from_hesse(diagnostic) !=
+        hbt::FitFailureReason::HesseInvalid) {
+        return fail("explicit HESSE failure was not classified");
+    }
+    diagnostic = valid;
+    diagnostic.state_valid = false;
+    if (hbt::fit_failure_from_hesse(diagnostic) !=
+        hbt::FitFailureReason::HesseInvalid) {
+        return fail("invalid HESSE state was not classified");
+    }
+    diagnostic = valid;
+    diagnostic.valid_covariance = false;
+    if (hbt::fit_failure_from_hesse(diagnostic) !=
+        hbt::FitFailureReason::HesseCovarianceInvalid) {
+        return fail("invalid HESSE covariance was not classified");
+    }
+    return true;
+}
+
+/**
  * @brief Verify exact mixed-fraction endpoints are explicit degeneracies.
  * @return true when endpoint and out-of-domain states remain distinguishable.
  */
@@ -392,7 +429,9 @@ bool verify_insufficient_bins_are_reported() {
     );
     if (gaussian.fully_valid ||
         gaussian.failure_reason != hbt::FitFailureReason::InsufficientBins ||
-        gaussian.migrad.attempted || gaussian.minos_radius.attempted) {
+        gaussian.migrad.attempted || gaussian.minos_radius.attempted ||
+        gaussian.hesse.attempted ||
+        gaussian.error_method != hbt::FitErrorMethod::None) {
         return fail("Gaussian K < P+1 was not explicitly rejected");
     }
 
@@ -418,7 +457,7 @@ bool verify_insufficient_bins_are_reported() {
 }  // namespace
 
 /**
- * @brief Run focused MIGRAD, multistart, MINOS, and diagnostic-state checks.
+ * @brief Run focused MIGRAD, multistart, MINOS/HESSE, and diagnostic checks.
  * @return EXIT_SUCCESS when every Minuit2 contract holds, otherwise failure.
  */
 int main() {
@@ -426,6 +465,7 @@ int main() {
         !verify_mixed_multistart_and_minos() ||
         !verify_migrad_failure_classification() ||
         !verify_minos_failure_classification() ||
+        !verify_hesse_failure_classification() ||
         !verify_core_fraction_classification() ||
         !verify_insufficient_bins_are_reported()) {
         return EXIT_FAILURE;

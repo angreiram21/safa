@@ -1,6 +1,6 @@
 /**
  * @file minuit2_fitter.cpp
- * @brief Minuit2 MIGRAD/MINOS fits for post-sample HBT shape histograms.
+ * @brief Minuit2 MIGRAD fits with MINOS/HESSE uncertainties for HBT histograms.
  */
 
 #include "hbt/fits/minuit2_fitter.h"
@@ -11,6 +11,7 @@
 #include <Minuit2/FCNBase.h>
 #include <Minuit2/FunctionMinimum.h>
 #include <Minuit2/MinosError.h>
+#include <Minuit2/MnHesse.h>
 #include <Minuit2/MnMigrad.h>
 #include <Minuit2/MnMinos.h>
 #include <Minuit2/MnUserParameters.h>
@@ -26,8 +27,10 @@
 namespace hbt {
 namespace {
 
+using ROOT::Minuit2::FCNBase;
 using ROOT::Minuit2::FunctionMinimum;
 using ROOT::Minuit2::MinosError;
+using ROOT::Minuit2::MnHesse;
 using ROOT::Minuit2::MnMigrad;
 using ROOT::Minuit2::MnMinos;
 using ROOT::Minuit2::MnUserParameters;
@@ -57,6 +60,14 @@ MinosDiagnostic unattempted_minos() {
 }
 
 /**
+ * @brief Return an unattempted HESSE diagnostic.
+ * @return Stable diagnostic with attempted == false.
+ */
+HesseDiagnostic unattempted_hesse() {
+    return {false, false, false, false, -1};
+}
+
+/**
  * @brief Build an invalid Gaussian result before any minimization.
  * @param reason Exact invalidity reason.
  * @param estimator Statistical objective associated with the empty result.
@@ -79,6 +90,8 @@ GaussianFitResult invalid_gaussian(
         std::nullopt,
         empty,
         unattempted_minos(),
+        unattempted_hesse(),
+        FitErrorMethod::None,
         std::nullopt,
         std::nullopt,
         {}
@@ -111,6 +124,8 @@ MixedFitResult invalid_mixed(
         unattempted_minos(),
         unattempted_minos(),
         unattempted_minos(),
+        unattempted_hesse(),
+        FitErrorMethod::None,
         std::nullopt,
         std::nullopt,
         std::nullopt,
@@ -452,6 +467,94 @@ bool mixed_minimum_is_evaluable(
 }
 
 /**
+ * @brief Run local HESSE around an already selected MIGRAD minimum.
+ * @param objective Objective minimized by the selected fit.
+ * @param minimum Selected minimum; MnHesse appends its local covariance state in place.
+ * @return Stable HESSE diagnostics. Exceptions are converted to an invalid
+ *         attempted diagnostic so the caller can publish a deterministic state.
+ *
+ * HESSE is never used to choose a basin or central value. It is invoked only
+ * as an uncertainty fallback after MINOS fails and therefore remains local to
+ * the already selected physical minimum.
+ */
+HesseDiagnostic run_hesse(
+    const FCNBase& objective,
+    FunctionMinimum& minimum
+) {
+    try {
+        MnHesse hesse;
+        hesse(objective, minimum);
+        const auto& state = minimum.UserState();
+        return {
+            true,
+            state.IsValid(),
+            minimum.HesseFailed(),
+            minimum.HasValidCovariance(),
+            state.CovarianceStatus()
+        };
+    } catch (const std::exception&) {
+        return {true, false, true, false, -1};
+    }
+}
+
+/**
+ * @brief Transform a symmetric HESSE log-radius error into physical R errors.
+ * @param log_radius Central fitted log radius.
+ * @param log_error Positive one-sigma HESSE error in the fitted log coordinate.
+ * @return Physical radius and transformed lower/upper uncertainty distances.
+ * @throws std::invalid_argument If the central value or transformed interval is
+ *         non-finite, non-positive, or ordered incorrectly.
+ *
+ * HESSE is symmetric in log(R), but exponentiation makes the published
+ * physical-radius uncertainties asymmetric while preserving R > 0.
+ */
+FitParameterEstimate physical_radius_hesse_estimate(
+    double log_radius,
+    double log_error
+) {
+    if (!std::isfinite(log_radius) || !std::isfinite(log_error) ||
+        log_error <= 0.0) {
+        throw std::invalid_argument(
+            "HBT analysis HESSE: invalid log-radius uncertainty"
+        );
+    }
+    const double radius = std::exp(log_radius);
+    const double lower = std::exp(log_radius - log_error);
+    const double upper = std::exp(log_radius + log_error);
+    if (!std::isfinite(radius) || !std::isfinite(lower) ||
+        !std::isfinite(upper) || radius <= 0.0 || lower <= 0.0 ||
+        upper <= 0.0 || lower > radius || upper < radius) {
+        throw std::invalid_argument(
+            "HBT analysis HESSE: invalid physical radius interval"
+        );
+    }
+    return {radius, radius - lower, upper - radius};
+}
+
+/**
+ * @brief Convert a direct-parameter HESSE standard error to published distances.
+ * @param value Central fitted physical value.
+ * @param error Positive finite local HESSE standard error.
+ * @return Central value with equal lower and upper uncertainty distances.
+ * @throws std::invalid_argument If @p value or @p error is invalid.
+ *
+ * The HESSE fallback is deliberately local. For a bounded parameter such as
+ * f_core the Gaussian covariance approximation is not clipped to [0,1]; the
+ * central value remains subject to the existing strict physical-domain check.
+ */
+FitParameterEstimate direct_parameter_hesse_estimate(
+    double value,
+    double error
+) {
+    if (!std::isfinite(value) || !std::isfinite(error) || error <= 0.0) {
+        throw std::invalid_argument(
+            "HBT analysis HESSE: invalid direct-parameter uncertainty"
+        );
+    }
+    return {value, error, error};
+}
+
+/**
  * @brief Transform MINOS log-radius errors into physical R-space distances.
  * @param log_radius Central fitted log radius.
  * @param error Fully valid MINOS result for log radius.
@@ -523,7 +626,7 @@ std::pair<FunctionMinimum, MigradDiagnostic> run_gaussian_migrad(
  * @brief One completed deterministic Gaussian start retained until selection.
  */
 struct GaussianStartOutcome {
-    FunctionMinimum minimum;      ///< Complete Minuit minimum for later MINOS.
+    FunctionMinimum minimum;      ///< Complete Minuit minimum for MINOS/HESSE.
     MigradDiagnostic diagnostic;  ///< Stable serialized start diagnostic.
 };
 
@@ -563,7 +666,7 @@ std::pair<FunctionMinimum, MigradDiagnostic> run_mixed_migrad(
  * @brief One completed deterministic mixed start retained until selection.
  */
 struct MixedStartOutcome {
-    FunctionMinimum minimum;      ///< Complete Minuit minimum for later MINOS.
+    FunctionMinimum minimum;      ///< Complete Minuit minimum for MINOS/HESSE.
     MigradDiagnostic diagnostic;  ///< Stable serialized start diagnostic.
     MixedBasinPoint endpoint;     ///< External endpoint for basin grouping.
 };
@@ -718,17 +821,44 @@ GaussianFitResult fit_gaussian_model(
         result.minos_radius,
         false
     );
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
-        return result;
+
+    bool minos_estimate_valid = minos_reason == FitFailureReason::None;
+    if (minos_estimate_valid) {
+        try {
+            result.radius = physical_radius_estimate(log_radius, radius_error);
+            result.error_method = FitErrorMethod::Minos;
+        } catch (const std::exception&) {
+            result.radius = std::nullopt;
+            minos_estimate_valid = false;
+        }
+    }
+
+    if (!minos_estimate_valid) {
+        result.hesse = run_hesse(selected_objective, selected);
+        const FitFailureReason hesse_reason = fit_failure_from_hesse(result.hesse);
+        if (hesse_reason != FitFailureReason::None) {
+            result.failure_reason = hesse_reason;
+            return result;
+        }
+        try {
+            result.radius = physical_radius_hesse_estimate(
+                log_radius,
+                selected.UserState().Error(0U)
+            );
+            result.error_method = FitErrorMethod::Hesse;
+        } catch (const std::exception&) {
+            result.radius = std::nullopt;
+            result.failure_reason = FitFailureReason::HesseNonFiniteError;
+            return result;
+        }
     }
 
     try {
-        result.radius = physical_radius_estimate(log_radius, radius_error);
         result.fitted_pdf = probabilities_to_pdf(probabilities, binning);
     } catch (const std::exception&) {
         result.radius = std::nullopt;
         result.fitted_pdf.clear();
+        result.error_method = FitErrorMethod::None;
         result.failure_reason = FitFailureReason::NonFiniteMinimum;
         return result;
     }
@@ -912,53 +1042,92 @@ MixedFitResult fit_mixed_model(
     );
     MnMinos minos(selected_objective, selected);
     const MinosError core_error = minos.Minos(0U);
+    const MinosError tail_error = minos.Minos(1U);
+    const MinosError fraction_error = minos.Minos(2U);
     result.minos_core_radius = minos_diagnostic(core_error);
-    FitFailureReason minos_reason = fit_failure_from_minos(
+    result.minos_tail_radius = minos_diagnostic(tail_error);
+    result.minos_core_fraction = minos_diagnostic(fraction_error);
+
+    const FitFailureReason core_minos_reason = fit_failure_from_minos(
         result.minos_core_radius,
         false
     );
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
-        return result;
+    const FitFailureReason tail_minos_reason = fit_failure_from_minos(
+        result.minos_tail_radius,
+        false
+    );
+    FitFailureReason fraction_minos_reason = fit_failure_from_minos(
+        result.minos_core_fraction,
+        true
+    );
+    if (fraction_minos_reason == FitFailureReason::None &&
+        core_fraction + fraction_error.Lower() <= 0.0) {
+        fraction_minos_reason = FitFailureReason::MinosLowerLimit;
+    }
+    if (fraction_minos_reason == FitFailureReason::None &&
+        core_fraction + fraction_error.Upper() >= 1.0) {
+        fraction_minos_reason = FitFailureReason::MinosUpperLimit;
     }
 
-    const MinosError tail_error = minos.Minos(1U);
-    result.minos_tail_radius = minos_diagnostic(tail_error);
-    minos_reason = fit_failure_from_minos(result.minos_tail_radius, false);
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
-        return result;
+    bool minos_estimates_valid =
+        core_minos_reason == FitFailureReason::None &&
+        tail_minos_reason == FitFailureReason::None &&
+        fraction_minos_reason == FitFailureReason::None;
+    if (minos_estimates_valid) {
+        try {
+            result.core_radius = physical_radius_estimate(log_core, core_error);
+            result.tail_radius = physical_radius_estimate(log_tail, tail_error);
+            result.core_fraction = direct_parameter_estimate(
+                core_fraction,
+                fraction_error
+            );
+            result.error_method = FitErrorMethod::Minos;
+        } catch (const std::exception&) {
+            result.core_radius = std::nullopt;
+            result.tail_radius = std::nullopt;
+            result.core_fraction = std::nullopt;
+            minos_estimates_valid = false;
+        }
     }
 
-    const MinosError fraction_error = minos.Minos(2U);
-    result.minos_core_fraction = minos_diagnostic(fraction_error);
-    minos_reason = fit_failure_from_minos(result.minos_core_fraction, true);
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
-        return result;
-    }
-    if (core_fraction + fraction_error.Lower() <= 0.0) {
-        result.failure_reason = FitFailureReason::MinosLowerLimit;
-        return result;
-    }
-    if (core_fraction + fraction_error.Upper() >= 1.0) {
-        result.failure_reason = FitFailureReason::MinosUpperLimit;
-        return result;
+    if (!minos_estimates_valid) {
+        result.hesse = run_hesse(selected_objective, selected);
+        const FitFailureReason hesse_reason = fit_failure_from_hesse(result.hesse);
+        if (hesse_reason != FitFailureReason::None) {
+            result.failure_reason = hesse_reason;
+            return result;
+        }
+        try {
+            result.core_radius = physical_radius_hesse_estimate(
+                log_core,
+                selected.UserState().Error(0U)
+            );
+            result.tail_radius = physical_radius_hesse_estimate(
+                log_tail,
+                selected.UserState().Error(1U)
+            );
+            result.core_fraction = direct_parameter_hesse_estimate(
+                core_fraction,
+                selected.UserState().Error(2U)
+            );
+            result.error_method = FitErrorMethod::Hesse;
+        } catch (const std::exception&) {
+            result.core_radius = std::nullopt;
+            result.tail_radius = std::nullopt;
+            result.core_fraction = std::nullopt;
+            result.failure_reason = FitFailureReason::HesseNonFiniteError;
+            return result;
+        }
     }
 
     try {
-        result.core_radius = physical_radius_estimate(log_core, core_error);
-        result.tail_radius = physical_radius_estimate(log_tail, tail_error);
-        result.core_fraction = direct_parameter_estimate(
-            core_fraction,
-            fraction_error
-        );
         result.fitted_pdf = probabilities_to_pdf(probabilities, binning);
     } catch (const std::exception&) {
         result.core_radius = std::nullopt;
         result.tail_radius = std::nullopt;
         result.core_fraction = std::nullopt;
         result.fitted_pdf.clear();
+        result.error_method = FitErrorMethod::None;
         result.failure_reason = FitFailureReason::NonFiniteMinimum;
         return result;
     }

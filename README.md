@@ -922,8 +922,11 @@ histograms use a least-squares unimodal regression with a non-decreasing branch
 followed by a non-increasing branch. This prevents isolated radial endpoint bins
 from defining the core mode. The resulting FWHM is converted to the model
 radius; raw counts, `N_selected`, and fit regions are unchanged. Among valid
-MIGRAD minima the smallest objective value is selected for MINOS. The mixed
-model remains fitted over the full statistical region.
+MIGRAD minima the smallest objective value is selected. MINOS is attempted
+first for the uncertainty. If its interval is invalid, reaches a call/parameter
+limit, or discovers a new minimum, HESSE is evaluated locally around the same
+selected minimum and supplies the published fallback covariance error. The
+mixed model remains fitted over the full statistical region.
 
 The mixed model fits `R_core > 0`, `R_tail > 0` and `f_core` in `[0,1]`. No
 ordering between `R_core` and `R_tail` is imposed or used as a validity
@@ -941,17 +944,24 @@ basin, the arithmetic mean of `log(R_core)` is compared with `log(R_HM)`, and
 the basin minimizing `|mean(log(R_core)) - log(R_HM)|` is selected. This is a
 relative-scale criterion and imposes no ordering between `R_core` and `R_tail`.
 Within that selected basin, the valid minimum with the smallest objective value
-is used for MINOS. Basin multiplicity is retained only as a stability diagnostic
-and is not an acceptance veto. Poisson remains the default estimator used by
-backward-compatible plotting columns.
+is retained as the central fit. MINOS is then attempted independently for all
+three parameters. If every required MINOS interval is valid, those profile
+errors are published. If any MINOS interval fails (including discovery of a
+lower minimum outside the selected physical basin), one HESSE calculation is
+run around the same selected minimum and its local covariance errors are used
+for all three parameters. The original MINOS diagnostics are retained, so the
+fallback cause remains visible. Basin multiplicity is retained only as a
+stability diagnostic and is not an acceptance veto. Poisson remains the default
+estimator used by backward-compatible plotting columns.
 
 The one-dimensional radial-mT count-threshold machinery is retained, but its
 current value is `N_selected >= 0`, so no non-empty slice is vetoed by this
 criterion. `N_selected` itself and its histogram-selection definition are
-unchanged. Invalid MIGRAD/MINOS or covariance states, degenerate core fractions,
-missing Gaussian anchors, invalid half-maximum seeds, invalid objectives and
-insufficient regions are preserved explicitly. An invalid fit does not fabricate
-parameter estimates or fit curves.
+unchanged. Invalid MIGRAD states, failed MINOS with failed HESSE fallback,
+invalid HESSE covariance/errors, degenerate core fractions, missing Gaussian
+anchors, invalid half-maximum seeds, invalid objectives and insufficient regions
+are preserved explicitly. An invalid fit does not fabricate parameter estimates
+or fit curves.
 
 ### Signed delta-t statistics
 
@@ -1271,9 +1281,11 @@ alternatives are written as `gaussian_fit_pdf_neyman`,
 `mixed_fit_pdf_pearson`. All mixed curves span the full statistical region. The
 parameter table contains an explicit `estimator` column. It records the exact
 region used by each fit, independent Poisson/Neyman/Pearson Gaussian `R_G_core`,
-and independent mixed `R_core`, `R_tail`, and `f_core` values, asymmetric MINOS
-errors, objective minima, covariance state, all 36 mixed-start diagnostics, and
-the selected-minimum basin multiplicity diagnostic.
+and independent mixed `R_core`, `R_tail`, and `f_core` values. The
+`error_method` column records whether published uncertainties come from MINOS or
+the HESSE fallback; MINOS side diagnostics and fit-level HESSE covariance
+status are both retained. Objective minima, all 36 mixed-start diagnostics, and
+the selected-minimum basin multiplicity diagnostic are also serialized.
 Delta-t directories contain
 `statistics.csv` with status, `N_selected`, mean, sigma and sigma error and,
 when a region exists, `distribution.csv`.
@@ -1409,8 +1421,9 @@ The standard CTest suite contains 51 tests covering:
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
   identify the R_HM-anchored Gaussian-core basin, select the smallest objective
-  inside that basin, retain basin multiplicity diagnostically, and validate
-  MIGRAD/covariance/MINOS states and asymmetric physical errors;
+  inside that basin, retain basin multiplicity diagnostically, prefer MINOS
+  profile errors, and fall back to local HESSE covariance errors when MINOS
+  fails without changing the selected central minimum;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`
   traceability metadata, fit/statistics CSVs and omission of invalid fit curves;
