@@ -386,9 +386,6 @@ bool verify_analysis_and_output() {
     const std::string valid_parameters =
         read_text(lcms_out / "fit_parameters.csv");
     if (valid_parameters.find("minos_lower_valid") == std::string::npos ||
-        valid_parameters.find("error_method") == std::string::npos ||
-        valid_parameters.find("hesse_attempted") == std::string::npos ||
-        valid_parameters.find("hesse_valid_covariance") == std::string::npos ||
         valid_parameters.find("fit_upper_edge") == std::string::npos ||
         valid_parameters.find("R_G_core") == std::string::npos ||
         valid_parameters.find("estimator") == std::string::npos ||

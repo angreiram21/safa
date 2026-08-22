@@ -36,14 +36,6 @@ MinosDiagnostic unattempted_minos() {
 }
 
 /**
- * @brief Return stable unattempted HESSE diagnostics for empty results.
- * @return Diagnostic with attempted == false and no covariance state.
- */
-HesseDiagnostic unattempted_hesse() {
-    return {false, false, false, false, -1};
-}
-
-/**
  * @brief Build an explicit invalid Gaussian fit result without fabricated data.
  * @param reason Stable reason explaining why no Gaussian result is published.
  * @param estimator Objective identity retained even when no fit is attempted.
@@ -66,8 +58,6 @@ GaussianFitResult invalid_gaussian_result(
         std::nullopt,
         empty,
         unattempted_minos(),
-        unattempted_hesse(),
-        FitErrorMethod::None,
         std::nullopt,
         std::nullopt,
         {}
@@ -100,8 +90,6 @@ MixedFitResult invalid_mixed_result(
         unattempted_minos(),
         unattempted_minos(),
         unattempted_minos(),
-        unattempted_hesse(),
-        FitErrorMethod::None,
         std::nullopt,
         std::nullopt,
         std::nullopt,

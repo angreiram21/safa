@@ -228,19 +228,6 @@ FitFailureReason fit_failure_from_minos(
     return FitFailureReason::None;
 }
 
-FitFailureReason fit_failure_from_hesse(
-    const HesseDiagnostic& diagnostic
-) {
-    if (!diagnostic.attempted || !diagnostic.state_valid ||
-        diagnostic.hesse_failed) {
-        return FitFailureReason::HesseInvalid;
-    }
-    if (!diagnostic.valid_covariance) {
-        return FitFailureReason::HesseCovarianceInvalid;
-    }
-    return FitFailureReason::None;
-}
-
 FitFailureReason mixed_core_fraction_failure(double core_fraction) {
     if (!std::isfinite(core_fraction) || core_fraction < 0.0 ||
         core_fraction > 1.0) {
@@ -300,12 +287,6 @@ const char* fit_failure_reason_token(FitFailureReason reason) {
             return "minos_lower_new_minimum";
         case FitFailureReason::MinosUpperNewMinimum:
             return "minos_upper_new_minimum";
-        case FitFailureReason::HesseInvalid:
-            return "hesse_invalid";
-        case FitFailureReason::HesseCovarianceInvalid:
-            return "hesse_covariance_invalid";
-        case FitFailureReason::HesseNonFiniteError:
-            return "hesse_non_finite_error";
     }
 
     throw std::invalid_argument("invalid FitFailureReason");
@@ -322,19 +303,6 @@ const char* fit_estimator_token(FitEstimator estimator) {
     }
 
     throw std::invalid_argument("invalid FitEstimator");
-}
-
-const char* fit_error_method_token(FitErrorMethod method) {
-    switch (method) {
-        case FitErrorMethod::None:
-            return "none";
-        case FitErrorMethod::Minos:
-            return "minos";
-        case FitErrorMethod::Hesse:
-            return "hesse";
-    }
-
-    throw std::invalid_argument("invalid FitErrorMethod");
 }
 
 const char* delta_t_status_token(DeltaTStatisticsStatus status) {

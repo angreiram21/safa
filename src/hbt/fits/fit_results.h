@@ -26,10 +26,8 @@ enum class FitObservableFamily {
  * @brief Statistical objective used to estimate Gaussian and mixed parameters.
  *
  * Poisson, Neyman, and Pearson are fitted independently. Each estimator keeps
- * its own deterministic starts, selected minimum, MIGRAD state, and error
- * evaluation; numerical results are never pooled across estimators. MINOS is
- * preferred and HESSE is used only as a local covariance fallback when MINOS
- * cannot provide the required interval.
+ * its own deterministic starts, selected minimum, MIGRAD state, and MINOS
+ * uncertainties; numerical results are never pooled across estimators.
  */
 enum class FitEstimator {
     Poisson, ///< Binned Poisson deviance; production/default estimator.
@@ -63,23 +61,7 @@ enum class FitFailureReason {
     MinosLowerLimit,         ///< Lower MINOS side reached a parameter limit.
     MinosUpperLimit,         ///< Upper MINOS side reached a parameter limit.
     MinosLowerNewMinimum,    ///< Lower MINOS side found a new minimum.
-    MinosUpperNewMinimum,    ///< Upper MINOS side found a new minimum.
-    HesseInvalid,             ///< HESSE did not return a usable parameter state.
-    HesseCovarianceInvalid,   ///< HESSE did not provide a valid covariance matrix.
-    HesseNonFiniteError       ///< HESSE returned a non-finite/non-positive error.
-};
-
-/**
- * @brief Error algorithm used to publish one fitted parameter estimate.
- *
- * MINOS is always attempted first. HESSE is used only when at least one
- * required MINOS interval is invalid for the selected fit. `None` identifies
- * results for which no publishable uncertainty was obtained.
- */
-enum class FitErrorMethod {
-    None,  ///< No publishable uncertainty estimate is available.
-    Minos, ///< Published errors come from MINOS profile intervals.
-    Hesse  ///< Published errors come from the local HESSE covariance matrix.
+    MinosUpperNewMinimum     ///< Upper MINOS side found a new minimum.
 };
 
 /**
@@ -137,34 +119,17 @@ struct MinosDiagnostic {
     bool upper_new_minimum;    ///< Upper side found a new minimum.
 };
 
-
 /**
- * @brief Stable diagnostics for one HESSE fallback evaluation.
- *
- * HESSE is evaluated only after MINOS fails for the selected minimum. The
- * diagnostic describes the local covariance calculation around that same
- * selected minimum; it never participates in basin selection.
- */
-struct HesseDiagnostic {
-    bool attempted;          ///< Whether the HESSE fallback was invoked.
-    bool state_valid;        ///< Returned Minuit user state is valid.
-    bool hesse_failed;       ///< FunctionMinimum reports a HESSE failure.
-    bool valid_covariance;   ///< Returned covariance matrix is valid.
-    int covariance_status;   ///< Minuit covariance-status code, or -1 if absent.
-};
-
-/**
- * @brief Physical parameter value with uncertainty distances.
+ * @brief Physical parameter value with asymmetric MINOS errors.
  *
  * lower_error and upper_error are non-negative distances from value in the
- * physical parameter space. MINOS may produce asymmetric intervals directly.
- * HESSE is symmetric in the fitted Minuit coordinate; log-radius HESSE errors
- * become asymmetric after transformation back to positive physical radii.
+ * physical parameter space. For log-radius fits the transformation from the
+ * MINOS interval is completed before this structure is created.
  */
 struct FitParameterEstimate {
     double value;        ///< Physical fitted parameter value.
-    double lower_error;  ///< Distance to the published lower endpoint.
-    double upper_error;  ///< Distance to the published upper endpoint.
+    double lower_error;  ///< Distance to the lower MINOS endpoint.
+    double upper_error;  ///< Distance to the upper MINOS endpoint.
 };
 
 /**
@@ -277,15 +242,6 @@ constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 );
 
 /**
- * @brief Classify whether a HESSE fallback produced a usable covariance state.
- * @param diagnostic Completed stable HESSE diagnostic.
- * @return None when HESSE produced a valid state and covariance matrix.
- */
-[[nodiscard]] FitFailureReason fit_failure_from_hesse(
-    const HesseDiagnostic& diagnostic
-);
-
-/**
  * @brief Classify the physical validity of a fitted mixed core fraction.
  * @param core_fraction Fitted physical fraction.
  * @return None for 0 < f_core < 1, DegenerateCoreFraction at either exact
@@ -301,15 +257,14 @@ constexpr double kMixedBasinCoreFractionTolerance = 0.01;
  * Two deterministic radius starts are attempted when available: the moment
  * seed and the half-maximum-width seed converted to the model radius. The
  * numerically valid MIGRAD solution with the smallest estimator objective is
- * selected. MINOS is attempted first; if its required interval fails, HESSE
- * supplies a local covariance fallback around the same selected minimum. The
- * Gaussian fit region remains the independently validated 10% core region.
+ * selected for MINOS. The Gaussian fit region remains the independently
+ * validated 10% core region.
  */
 struct GaussianFitResult {
     /** Number of deterministic Gaussian MIGRAD starts. */
     static constexpr std::size_t kStartCount = 2U;
 
-    bool fully_valid;                 ///< Selected MIGRAD and one error method are valid.
+    bool fully_valid;                 ///< Selected MIGRAD and MINOS are valid.
     FitFailureReason failure_reason;  ///< Primary invalidity cause, if any.
     FitEstimator estimator;           ///< Objective minimized by this fit only.
     /// Diagnostics for moment and half-maximum starts, respectively.
@@ -320,10 +275,8 @@ struct GaussianFitResult {
     std::optional<std::size_t> selected_start;
     MigradDiagnostic migrad;           ///< Selected minimum MIGRAD diagnostic.
     MinosDiagnostic minos_radius;      ///< MINOS diagnostic for log(R).
-    HesseDiagnostic hesse;              ///< Local HESSE fallback diagnostic.
-    FitErrorMethod error_method;        ///< Method used for published errors.
     std::optional<double> q_min;        ///< Smallest valid objective found.
-    /// Physical R and published uncertainty distances when fully valid.
+    /// Physical R and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> radius;
     /// Valid fitted bin densities; empty when the fit is not fully valid.
     std::vector<double> fitted_pdf;
@@ -345,17 +298,14 @@ struct GaussianFitResult {
  * whose geometric-mean R_core is closest to R_HM in logarithmic relative
  * scale, equivalently the basin minimizing
  * |mean(log(R_core)) - log(R_HM)|. The valid minimum with the smallest q
- * inside that basin is then selected. MINOS is attempted first for all mixed
- * parameters. If any required MINOS interval fails, one local HESSE covariance
- * calculation supplies all published parameter errors around the same selected
- * physical basin. `consensus_size` is retained only as diagnostic basin
- * multiplicity and never acts as an acceptance veto.
+ * inside that basin is then selected for MINOS. `consensus_size` is retained
+ * only as diagnostic basin multiplicity and never acts as an acceptance veto.
  */
 struct MixedFitResult {
     /** Number of deterministic Cartesian-product mixed MIGRAD starts. */
     static constexpr std::size_t kCoreStartCount = 36U;
 
-    bool fully_valid;                  ///< Selected fit and one error method are valid.
+    bool fully_valid;                  ///< Selected fit and all MINOS are valid.
     FitFailureReason failure_reason;   ///< Primary invalidity cause, if any.
     FitEstimator estimator;            ///< Objective minimized by this fit only.
     /// Diagnostics for all 36 deterministic starts.
@@ -369,14 +319,12 @@ struct MixedFitResult {
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.
-    HesseDiagnostic hesse;              ///< Local HESSE fallback diagnostic.
-    FitErrorMethod error_method;        ///< Method used for all published errors.
     std::optional<double> q_min;        ///< Selected basin minimum objective value.
-    /// Physical core radius and published uncertainty distances when fully valid.
+    /// Physical core radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_radius;
-    /// Physical tail radius and published uncertainty distances when fully valid.
+    /// Physical tail radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> tail_radius;
-    /// Physical core fraction and published uncertainty distances when fully valid.
+    /// Physical core fraction and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_fraction;
     /// Valid fitted bin densities over the full mixed region.
     std::vector<double> fitted_pdf;
@@ -485,14 +433,6 @@ struct HistogramAnalysisState {
  * @throws std::invalid_argument If @p estimator is not a valid enum value.
  */
 [[nodiscard]] const char* fit_estimator_token(FitEstimator estimator);
-
-/**
- * @brief Return a stable ASCII token for one published error method.
- * @param method Error algorithm used by the fit result.
- * @return Static token: `none`, `minos`, or `hesse`.
- * @throws std::invalid_argument If @p method is not a valid enum value.
- */
-[[nodiscard]] const char* fit_error_method_token(FitErrorMethod method);
 
 /**
  * @brief Return a stable ASCII token for one delta-t status.

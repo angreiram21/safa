@@ -1,6 +1,6 @@
 /**
  * @file minuit2_fitter.h
- * @brief Minuit2 MIGRAD fits with MINOS/HESSE uncertainties for HBT histograms.
+ * @brief Minuit2 MIGRAD/MINOS fits for post-sample HBT shape histograms.
  */
 
 #ifndef HBT_FITS_MINUIT2_FITTER_H
@@ -17,7 +17,7 @@
 namespace hbt {
 
 /**
- * @brief Fit one normalized pure-Gaussian estimator with MIGRAD and MINOS/HESSE errors.
+ * @brief Fit one normalized pure-Gaussian estimator with MIGRAD and MINOS.
  * @param family OSL or radial physical model family.
  * @param bins Slot-major raw uint64_t histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
@@ -26,16 +26,13 @@ namespace hbt {
  * @param estimator Statistical objective minimized by this independent fit.
  * @param half_maximum_seed Gaussian R seed obtained from the half-maximum width
  *        of the full selected histogram and converted to model R units.
- * @return Complete fit result including starts, MINOS diagnostics, and optional HESSE fallback.
+ * @return Complete fit result including both start diagnostics and MINOS.
  * @throws std::out_of_range If the selected raw slot is unavailable.
  *
  * The two deterministic starts are the moment-derived Gaussian radius and
  * @p half_maximum_seed. Both minimize the same estimator independently; the
- * valid minimum with the smallest q is selected. MINOS is attempted first for
- * its uncertainty. If MINOS cannot provide a valid interval, HESSE is evaluated
- * locally around the same selected minimum and supplies the published fallback
- * error. The only free parameter is log(R), so R remains strictly positive
- * without arbitrary physical bounds.
+ * valid minimum with the smallest q is selected. The only free parameter is
+ * log(R), so R remains strictly positive without arbitrary physical bounds.
  */
 [[nodiscard]] GaussianFitResult fit_gaussian_model(
     FitObservableFamily family,
@@ -66,11 +63,9 @@ namespace hbt {
  * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
  * grouped into numerical basins. The basin whose geometric-mean R_core is
  * closest to R_HM in logarithmic relative scale is identified as the physical
- * Gaussian-core basin; the smallest q inside that basin is selected. MINOS is
- * attempted for all three parameters. If any required MINOS interval fails,
- * one HESSE calculation supplies local covariance errors for all three
- * parameters around the same selected minimum. Basin multiplicity is
- * diagnostic only, and no ordering of R_core and R_tail is imposed.
+ * Gaussian-core basin; the smallest q inside that basin is selected for MINOS.
+ * Basin multiplicity is diagnostic only, and no ordering of R_core and R_tail
+ * is imposed.
  */
 [[nodiscard]] MixedFitResult fit_mixed_model(
     FitObservableFamily family,
