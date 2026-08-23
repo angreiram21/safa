@@ -62,9 +62,13 @@ namespace hbt {
  * The deterministic Cartesian product is
  * R_core={R_G,0.5R_HM,R_HM,2R_HM},
  * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
- * grouped into numerical basins. The basin whose geometric-mean R_core is
- * closest to R_HM in logarithmic relative scale is identified as the physical
- * Gaussian-core basin; the smallest q inside that basin is selected for MINOS.
+ * grouped into numerical basins. Basins whose representative mean f_core does
+ * not satisfy the strict physical mixed-component condition 0.1 < f_core < 0.9
+ * are rejected as degenerate before any R_HM comparison. Among the remaining
+ * basins, the one whose geometric-mean R_core is closest to R_HM in logarithmic
+ * relative scale is identified as the physical Gaussian-core basin; the
+ * smallest q inside that basin is selected for MINOS. If every basin is
+ * degenerate, the mixed fit is invalidated with DegenerateCoreFraction.
  * The terminal physical R_core, R_tail and f_core coordinates of every start
  * are retained for post-run basin inspection, including finite endpoints from
  * starts that fail the acceptance contract. These endpoint diagnostics do not

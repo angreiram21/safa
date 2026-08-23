@@ -90,7 +90,7 @@ std::vector<std::size_t> largest_mixed_basin_group(
     return best;
 }
 
-std::size_t select_mixed_start_by_half_maximum_basin(
+std::optional<std::size_t> select_mixed_start_by_half_maximum_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
     const std::vector<std::size_t>& valid_indices,
@@ -127,7 +127,7 @@ std::size_t select_mixed_start_by_half_maximum_basin(
 
     const auto components = mixed_basin_components(endpoints, valid_indices);
     const double log_half_maximum = std::log(half_maximum_radius);
-    std::size_t selected_component = 0U;
+    std::optional<std::size_t> selected_component;
     double selected_distance = std::numeric_limits<double>::infinity();
     double selected_component_q = std::numeric_limits<double>::infinity();
     std::size_t selected_component_index =
@@ -138,18 +138,27 @@ std::size_t select_mixed_start_by_half_maximum_basin(
          ++component_index) {
         const auto& component = components[component_index];
         double log_core_sum = 0.0;
+        double core_fraction_sum = 0.0;
         double component_q = std::numeric_limits<double>::infinity();
         std::size_t component_lowest_index =
             std::numeric_limits<std::size_t>::max();
         for (const std::size_t index : component) {
             log_core_sum += endpoints[index].log_core_radius;
+            core_fraction_sum += endpoints[index].core_fraction;
             component_q = std::min(component_q, q_values[index]);
             component_lowest_index = std::min(component_lowest_index, index);
         }
-        const double mean_log_core =
-            log_core_sum / static_cast<double>(component.size());
+        const double component_size = static_cast<double>(component.size());
+        const double mean_core_fraction = core_fraction_sum / component_size;
+        if (!(mean_core_fraction > kMixedPhysicalCoreFractionMin &&
+              mean_core_fraction < kMixedPhysicalCoreFractionMax)) {
+            continue;
+        }
+
+        const double mean_log_core = log_core_sum / component_size;
         const double distance = std::fabs(mean_log_core - log_half_maximum);
-        if (distance < selected_distance ||
+        if (!selected_component.has_value() ||
+            distance < selected_distance ||
             (distance == selected_distance &&
              (component_q < selected_component_q ||
               (component_q == selected_component_q &&
@@ -161,7 +170,11 @@ std::size_t select_mixed_start_by_half_maximum_basin(
         }
     }
 
-    const auto& basin = components[selected_component];
+    if (!selected_component.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto& basin = components[selected_component.value()];
     std::size_t selected_start = basin.front();
     for (const std::size_t index : basin) {
         if (q_values[index] < q_values[selected_start] ||

@@ -935,17 +935,24 @@ Gaussian fit using the same estimator. Poisson, Neyman and Pearson therefore
 remain completely independent.
 
 Numerically valid mixed MIGRAD minima are first grouped into numerical basins
-using the final `(log(R_core), log(R_tail), f_core)` coordinates. The physical
-Gaussian-core basin is identified by the observed half-maximum scale: for each
-basin, the arithmetic mean of `log(R_core)` is compared with `log(R_HM)`, and
-the basin minimizing `|mean(log(R_core)) - log(R_HM)|` is selected. This is a
-relative-scale criterion and imposes no ordering between `R_core` and `R_tail`.
-Within that selected basin, the valid minimum with the smallest objective value
-is used for MINOS. Basin multiplicity is retained only as a stability diagnostic
-and is not an acceptance veto. For diagnostic studies, the terminal physical
-`R_core`, `R_tail`, and `f_core` coordinates of every one of the 36 starts are
-also serialized, independently of whether that start is ultimately accepted.
-These endpoint columns do not participate in fit selection. Poisson remains the
+using the final `(log(R_core), log(R_tail), f_core)` coordinates. Each basin is
+represented by the arithmetic mean of `f_core` and of `log(R_core)`. Before the
+half-maximum comparison, basins are required to satisfy the strict physical
+mixed-component condition `0.1 < mean(f_core) < 0.9`; basins at or beyond either
+bound are treated as degenerate solutions and removed from the candidate set.
+If no non-degenerate basin remains, the mixed fit is invalidated with
+`degenerate_core_fraction`.
+
+Among the non-degenerate basins, the physical Gaussian-core basin is identified
+by the observed half-maximum scale: the basin minimizing
+`|mean(log(R_core)) - log(R_HM)|` is selected. This is a relative-scale criterion
+and imposes no ordering between `R_core` and `R_tail`. Within that selected
+basin, the valid minimum with the smallest objective value is used for MINOS.
+Basin multiplicity is retained only as a stability diagnostic and is not an
+acceptance veto. For diagnostic studies, the terminal physical `R_core`,
+`R_tail`, and `f_core` coordinates of every one of the 36 starts are also
+serialized, independently of whether that start is ultimately accepted. These
+endpoint columns do not participate in fit selection. Poisson remains the
 default estimator used by backward-compatible plotting columns.
 
 The one-dimensional radial-mT count-threshold machinery is retained, but its
@@ -1412,10 +1419,11 @@ The standard CTest suite contains 51 tests covering:
   semantics and explicit probability-normalization validation;
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
-  identify the R_HM-anchored Gaussian-core basin, select the smallest objective
-  inside that basin, retain basin multiplicity and every start endpoint
-  diagnostically, and validate MIGRAD/covariance/MINOS states and asymmetric
-  physical errors;
+  reject basins with representative `f_core` outside the strict `(0.1,0.9)`
+  physical mixed-component interval, identify the R_HM-anchored Gaussian-core
+  basin among the survivors, select the smallest objective inside that basin,
+  retain basin multiplicity and every start endpoint diagnostically, and
+  validate MIGRAD/covariance/MINOS states and asymmetric physical errors;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`
   traceability metadata, fit/statistics CSVs and omission of invalid fit curves;

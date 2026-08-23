@@ -53,7 +53,7 @@ enum class FitFailureReason {
     MigradCallLimit,         ///< MIGRAD exhausted its call budget.
     MigradAboveMaxEdm,       ///< MIGRAD stopped above maximum EDM.
     NonFiniteMinimum,        ///< Minimum or physical parameter is non-finite.
-    DegenerateCoreFraction,  ///< Mixed fit ended at f_core == 0 or 1.
+    DegenerateCoreFraction,  ///< No basin passes 0.1<f_core<0.9, or endpoint is degenerate.
     MinosLowerInvalid,       ///< A required lower MINOS side is invalid.
     MinosUpperInvalid,       ///< A required upper MINOS side is invalid.
     MinosLowerCallLimit,     ///< Lower MINOS side exhausted its call budget.
@@ -166,6 +166,12 @@ constexpr double kMixedBasinLogRadiusTolerance = 0.01;
 /** Numerical same-basin absolute tolerance for f_core. */
 constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 
+/** Lower exclusive f_core bound for a physically non-degenerate mixed basin. */
+constexpr double kMixedPhysicalCoreFractionMin = 0.1;
+
+/** Upper exclusive f_core bound for a physically non-degenerate mixed basin. */
+constexpr double kMixedPhysicalCoreFractionMax = 0.9;
+
 /**
  * @brief Test whether two mixed endpoints represent the same numerical basin.
  * @param lhs First converged mixed endpoint.
@@ -201,29 +207,34 @@ constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 );
 
 /**
- * @brief Select the mixed start from the basin anchored to the observed core width.
+ * @brief Select the mixed start from a non-degenerate basin anchored to R_HM.
  * @param endpoints Final endpoint for every attempted deterministic start.
  * @param q_values Objective value associated with every attempted start.
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
  * @param half_maximum_radius R_HM obtained from the histogram FWHM and converted
  *        to the Gaussian model-radius convention for this observable family.
- * @return Start index with the smallest q inside the R_HM-anchored basin.
+ * @return Start index with the smallest q inside the selected basin, or
+ *         std::nullopt when every numerical basin is physically degenerate.
  * @throws std::invalid_argument If array sizes differ, R_HM is non-finite or
  *         non-positive, no valid start is supplied, or a valid q is non-finite.
  * @throws std::out_of_range If a valid start index is outside the input arrays.
  *
  * Valid endpoints are partitioned into connected numerical basins using
- * same_mixed_basin(). Each basin is represented by the arithmetic mean of
- * log(R_core), equivalently by its geometric-mean R_core scale. The physical
- * Gaussian-core basin is the one minimizing
- * |mean(log(R_core)) - log(R_HM)| = |log(R_core,geom / R_HM)|.
- * This identifies the Gaussian component by the observed half-maximum core
- * width, without imposing any ordering between R_core and R_tail and without
- * using basin multiplicity as an acceptance criterion. After the basin is
- * fixed, q ranks only the minima inside that basin. Exact distance ties are
- * broken by the lower basin q and then the lowest start index.
+ * same_mixed_basin(). A basin is represented by the arithmetic mean of f_core
+ * and by the arithmetic mean of log(R_core), equivalently the geometric-mean
+ * R_core scale. Basins are eligible only when their representative fraction
+ * satisfies the strict physical mixed-component requirement
+ * 0.1 < mean(f_core) < 0.9. Basins at or beyond either bound are classified as
+ * degenerate and cannot participate in physical-basin selection.
+ *
+ * Among eligible basins, the Gaussian-core basin minimizes
+ * |mean(log(R_core)) - log(R_HM)| = |log(R_core,geom / R_HM)|. No ordering
+ * between R_core and R_tail is imposed and basin multiplicity is diagnostic
+ * only. After the basin is fixed, q ranks only the minima inside that basin.
+ * Exact distance ties are broken by the lower basin q and then the lowest
+ * start index.
  */
-[[nodiscard]] std::size_t select_mixed_start_by_half_maximum_basin(
+[[nodiscard]] std::optional<std::size_t> select_mixed_start_by_half_maximum_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
     const std::vector<std::size_t>& valid_indices,

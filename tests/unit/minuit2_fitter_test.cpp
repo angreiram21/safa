@@ -203,7 +203,7 @@ bool verify_mixed_multistart_and_minos() {
             ) > 1.0e-10 ||
             mixed.consensus_size == 0U) {
             return fail(
-                "mixed estimator did not preserve its R_HM-basin selection"
+                "mixed estimator did not preserve its non-degenerate R_HM-basin selection"
             );
         }
         if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
@@ -240,9 +240,13 @@ bool verify_mixed_multistart_and_minos() {
                 "selected mixed start endpoint does not match published values"
             );
         }
-        if (mixed.core_fraction->value <= 0.0 ||
-            mixed.core_fraction->value >= 1.0) {
-            return fail("mixed estimator published a degenerate core fraction");
+        if (!(mixed.core_fraction->value >
+                  hbt::kMixedPhysicalCoreFractionMin &&
+              mixed.core_fraction->value <
+                  hbt::kMixedPhysicalCoreFractionMax)) {
+            return fail(
+                "mixed estimator published a basin outside the physical f_core interval"
+            );
         }
     }
     return true;

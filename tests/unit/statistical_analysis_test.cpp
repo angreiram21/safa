@@ -299,37 +299,98 @@ bool verify_mixed_basin_grouping() {
 }
 
 /**
- * @brief Verify R_HM chooses the physical basin before q ranks its minima.
- * @return true when a lower-q remote basin loses to the R_HM-anchored basin
- *         and the lowest q inside the anchored basin is selected.
+ * @brief Verify R_HM chooses among non-degenerate basins before q ranks minima.
+ * @return true when a lower-q remote non-degenerate basin loses to the
+ *         R_HM-anchored basin and the lowest q inside that basin is selected.
  */
 bool verify_half_maximum_anchored_mixed_selection() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
         {std::log(4.00), std::log(6.00), 0.650},
         {std::log(4.02), std::log(6.03), 0.646},
-        {std::log(14.00), std::log(3.50), 0.080},
-        {std::log(14.04), std::log(3.52), 0.084},
-        {std::log(13.96), std::log(3.48), 0.077}
+        {std::log(14.00), std::log(3.50), 0.280},
+        {std::log(14.04), std::log(3.52), 0.284},
+        {std::log(13.96), std::log(3.48), 0.277}
     };
     const std::vector<double> q_values{120.0, 110.0, 90.0, 80.0, 70.0};
     const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U, 4U};
 
-    const std::size_t selected =
+    const std::optional<std::size_t> selected =
         hbt::select_mixed_start_by_half_maximum_basin(
             endpoints,
             q_values,
             valid_indices,
             4.10
         );
-    if (selected != 1U) {
+    if (!selected.has_value() || selected.value() != 1U) {
         return fail(
             "R_HM-anchored basin selection preferred a remote lower-q basin"
         );
     }
-    if (!(q_values[4U] < q_values[selected])) {
+    if (!(q_values[4U] < q_values[selected.value()])) {
         return fail(
             "R_HM basin test does not contain the intended lower global q"
         );
+    }
+    return true;
+}
+
+/**
+ * @brief Verify degenerate-f basins are removed before the R_HM comparison.
+ * @return true when a realistic non-degenerate basin is selected even though
+ *         degenerate basins are closer to R_HM or have a lower q.
+ */
+bool verify_degenerate_fraction_basin_filter() {
+    const std::vector<hbt::MixedBasinPoint> endpoints{
+        {std::log(10.40), std::log(3.03), 0.055},
+        {std::log(10.44), std::log(3.04), 0.058},
+        {std::log(2.83), std::log(3.81), 0.326},
+        {std::log(2.85), std::log(3.79), 0.329},
+        {std::log(3.92), std::log(3.19), 1.0e-9},
+        {std::log(3.95), std::log(3.18), 8.0e-9}
+    };
+    const std::vector<double> q_values{
+        653.0, 654.0, 684.0, 683.0, 500.0, 499.0
+    };
+    const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U, 4U, 5U};
+
+    const std::optional<std::size_t> selected =
+        hbt::select_mixed_start_by_half_maximum_basin(
+            endpoints,
+            q_values,
+            valid_indices,
+            3.934
+        );
+    if (!selected.has_value() || selected.value() != 3U) {
+        return fail(
+            "degenerate-f basin filter did not select the physical mixed basin"
+        );
+    }
+    return true;
+}
+
+/**
+ * @brief Verify the physical f_core basin bounds are strict and exhaustive.
+ * @return true when basins at 0.1 or 0.9 yield no selectable mixed solution.
+ */
+bool verify_no_nondegenerate_fraction_basin() {
+    const std::vector<hbt::MixedBasinPoint> endpoints{
+        {std::log(3.0), std::log(4.0), 0.100},
+        {std::log(3.01), std::log(4.01), 0.100},
+        {std::log(3.5), std::log(4.5), 0.900},
+        {std::log(3.51), std::log(4.51), 0.900}
+    };
+    const std::vector<double> q_values{10.0, 9.0, 8.0, 7.0};
+    const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U};
+
+    const std::optional<std::size_t> selected =
+        hbt::select_mixed_start_by_half_maximum_basin(
+            endpoints,
+            q_values,
+            valid_indices,
+            3.2
+        );
+    if (selected.has_value()) {
+        return fail("strict f_core basin bounds admitted a degenerate basin");
     }
     return true;
 }
@@ -479,6 +540,8 @@ int main() {
         !verify_gaussian_core_fallback() ||
         !verify_mixed_basin_grouping() ||
         !verify_half_maximum_anchored_mixed_selection() ||
+        !verify_degenerate_fraction_basin_filter() ||
+        !verify_no_nondegenerate_fraction_basin() ||
         !verify_empty_regions() || !verify_delta_t_region() ||
         !verify_normalization() || !verify_delta_t_statistics() ||
         !verify_invalid_delta_t_variance() ||

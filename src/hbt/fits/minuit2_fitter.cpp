@@ -891,23 +891,28 @@ MixedFitResult fit_mixed_model(
             )
         );
     }
-    const std::size_t selected_index =
+    const std::optional<std::size_t> selected_index =
         select_mixed_start_by_half_maximum_basin(
             endpoints,
             q_values,
             valid_indices,
             half_maximum_seed
         );
-    result.selected_core_start = selected_index;
-    result.selected_migrad = outcomes[selected_index].diagnostic;
+    if (!selected_index.has_value()) {
+        result.failure_reason = FitFailureReason::DegenerateCoreFraction;
+        return result;
+    }
+    const std::size_t selected_start = selected_index.value();
+    result.selected_core_start = selected_start;
+    result.selected_migrad = outcomes[selected_start].diagnostic;
     result.q_min = result.selected_migrad.q_min;
     result.consensus_size = selected_mixed_basin_size(
         outcomes,
         valid_indices,
-        selected_index
+        selected_start
     );
 
-    FunctionMinimum& selected = outcomes[selected_index].minimum;
+    FunctionMinimum& selected = outcomes[selected_start].minimum;
     const double log_core = selected.UserState().Value(0U);
     const double log_tail = selected.UserState().Value(1U);
     const double core_fraction = selected.UserState().Value(2U);
