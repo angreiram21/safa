@@ -174,7 +174,8 @@ bool verify_mixed_multistart_and_minos() {
             region,
             estimator,
             gaussian,
-            half_maximum_seed
+            half_maximum_seed,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         );
         if (mixed.estimator != estimator) {
             return fail("mixed result lost its estimator identity");
@@ -430,7 +431,8 @@ bool verify_insufficient_bins_are_reported() {
         three_bins,
         hbt::FitEstimator::Poisson,
         gaussian,
-        1.0
+        1.0,
+        hbt::MixedCoreFractionPolicy::RequireCoreAndTail
     );
     if (mixed.fully_valid ||
         mixed.failure_reason != hbt::FitFailureReason::InsufficientBins ||

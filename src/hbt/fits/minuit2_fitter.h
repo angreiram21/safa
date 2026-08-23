@@ -55,6 +55,7 @@ namespace hbt {
  * @param gaussian_result Valid 10%-core Gaussian result from the same estimator;
  *        its fitted radius provides the R_G member of the core-seed set.
  * @param half_maximum_seed Gaussian R seed converted from histogram FWHM.
+ * @param core_fraction_policy Origin-dependent physical basin-fraction policy.
  * @return Complete 36-start fit result, terminal start endpoints, and explicit
  *         diagnostics.
  * @throws std::out_of_range If the selected raw slot is unavailable.
@@ -62,9 +63,11 @@ namespace hbt {
  * The deterministic Cartesian product is
  * R_core={R_G,0.5R_HM,R_HM,2R_HM},
  * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
- * grouped into numerical basins. Basins whose representative mean f_core does
- * not satisfy the strict physical mixed-component condition 0.1 < f_core < 0.9
- * are rejected as degenerate before any R_HM comparison. Among the remaining
+ * grouped into numerical basins. Before any R_HM comparison, basin fractions
+ * are filtered by the supplied origin policy: PRD requires
+ * 0.1 < mean(f_core) < 0.9, while P and PR allow
+ * 0.1 < mean(f_core) <= 1 so a pure-Gaussian limit remains physical. Among
+ * the remaining
  * basins, the one whose geometric-mean R_core is closest to R_HM in logarithmic
  * relative scale is identified as the physical Gaussian-core basin; the
  * smallest q inside that basin is selected for MINOS. If every basin is
@@ -83,7 +86,8 @@ namespace hbt {
     const StatisticalRegion& region,
     FitEstimator estimator,
     const GaussianFitResult& gaussian_result,
-    double half_maximum_seed
+    double half_maximum_seed,
+    MixedCoreFractionPolicy core_fraction_policy
 );
 
 }  // namespace hbt

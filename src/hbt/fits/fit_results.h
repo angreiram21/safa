@@ -36,6 +36,17 @@ enum class FitEstimator {
 };
 
 /**
+ * @brief Origin-dependent physical admissibility policy for mixed-fit basins.
+ *
+ * PRD requires both Gaussian core and exponential tail to remain appreciable,
+ * whereas P and PR may physically reduce to a pure-Gaussian limit.
+ */
+enum class MixedCoreFractionPolicy {
+    RequireCoreAndTail, ///< PRD: require 0.1 < mean(f_core) < 0.9.
+    AllowPureGaussian  ///< P/PR: require 0.1 < mean(f_core) <= 1.
+};
+
+/**
  * @brief Stable reason describing why a fit is not fully valid.
  */
 enum class FitFailureReason {
@@ -53,7 +64,7 @@ enum class FitFailureReason {
     MigradCallLimit,         ///< MIGRAD exhausted its call budget.
     MigradAboveMaxEdm,       ///< MIGRAD stopped above maximum EDM.
     NonFiniteMinimum,        ///< Minimum or physical parameter is non-finite.
-    DegenerateCoreFraction,  ///< No basin passes 0.1<f_core<0.9, or endpoint is degenerate.
+    DegenerateCoreFraction,  ///< No basin passes the origin-specific physical f_core policy.
     MinosLowerInvalid,       ///< A required lower MINOS side is invalid.
     MinosUpperInvalid,       ///< A required upper MINOS side is invalid.
     MinosLowerCallLimit,     ///< Lower MINOS side exhausted its call budget.
@@ -169,7 +180,7 @@ constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 /** Lower exclusive f_core bound for a physically non-degenerate mixed basin. */
 constexpr double kMixedPhysicalCoreFractionMin = 0.1;
 
-/** Upper exclusive f_core bound for a physically non-degenerate mixed basin. */
+/** PRD-only upper exclusive f_core bound for a non-degenerate mixed basin. */
 constexpr double kMixedPhysicalCoreFractionMax = 0.9;
 
 /**
@@ -213,6 +224,8 @@ constexpr double kMixedPhysicalCoreFractionMax = 0.9;
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
  * @param half_maximum_radius R_HM obtained from the histogram FWHM and converted
  *        to the Gaussian model-radius convention for this observable family.
+ * @param core_fraction_policy Origin-dependent admissibility rule for the basin
+ *        representative mean f_core.
  * @return Start index with the smallest q inside the selected basin, or
  *         std::nullopt when every numerical basin is physically degenerate.
  * @throws std::invalid_argument If array sizes differ, R_HM is non-finite or
@@ -223,9 +236,11 @@ constexpr double kMixedPhysicalCoreFractionMax = 0.9;
  * same_mixed_basin(). A basin is represented by the arithmetic mean of f_core
  * and by the arithmetic mean of log(R_core), equivalently the geometric-mean
  * R_core scale. Basins are eligible only when their representative fraction
- * satisfies the strict physical mixed-component requirement
- * 0.1 < mean(f_core) < 0.9. Basins at or beyond either bound are classified as
- * degenerate and cannot participate in physical-basin selection.
+ * satisfies the origin-specific physical core-fraction policy. PRD requires
+ * 0.1 < mean(f_core) < 0.9, while P and PR require
+ * 0.1 < mean(f_core) <= 1 so that a pure-Gaussian limit remains admissible.
+ * Basins outside the applicable interval are classified as degenerate and
+ * cannot participate in physical-basin selection.
  *
  * Among eligible basins, the Gaussian-core basin minimizes
  * |mean(log(R_core)) - log(R_HM)| = |log(R_core,geom / R_HM)|. No ordering
@@ -238,7 +253,8 @@ constexpr double kMixedPhysicalCoreFractionMax = 0.9;
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
     const std::vector<std::size_t>& valid_indices,
-    double half_maximum_radius
+    double half_maximum_radius,
+    MixedCoreFractionPolicy core_fraction_policy
 );
 
 /**

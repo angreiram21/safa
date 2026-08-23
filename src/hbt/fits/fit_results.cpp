@@ -94,7 +94,8 @@ std::optional<std::size_t> select_mixed_start_by_half_maximum_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
     const std::vector<std::size_t>& valid_indices,
-    double half_maximum_radius
+    double half_maximum_radius,
+    MixedCoreFractionPolicy core_fraction_policy
 ) {
     if (endpoints.size() != q_values.size()) {
         throw std::invalid_argument(
@@ -150,8 +151,19 @@ std::optional<std::size_t> select_mixed_start_by_half_maximum_basin(
         }
         const double component_size = static_cast<double>(component.size());
         const double mean_core_fraction = core_fraction_sum / component_size;
-        if (!(mean_core_fraction > kMixedPhysicalCoreFractionMin &&
-              mean_core_fraction < kMixedPhysicalCoreFractionMax)) {
+        const bool lower_bound_valid =
+            mean_core_fraction > kMixedPhysicalCoreFractionMin;
+        bool upper_bound_valid = false;
+        switch (core_fraction_policy) {
+            case MixedCoreFractionPolicy::RequireCoreAndTail:
+                upper_bound_valid =
+                    mean_core_fraction < kMixedPhysicalCoreFractionMax;
+                break;
+            case MixedCoreFractionPolicy::AllowPureGaussian:
+                upper_bound_valid = mean_core_fraction <= 1.0;
+                break;
+        }
+        if (!lower_bound_valid || !upper_bound_valid) {
             continue;
         }
 

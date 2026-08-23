@@ -778,7 +778,8 @@ MixedFitResult fit_mixed_model(
     const StatisticalRegion& region,
     FitEstimator estimator,
     const GaussianFitResult& gaussian_result,
-    double half_maximum_seed
+    double half_maximum_seed,
+    MixedCoreFractionPolicy core_fraction_policy
 ) {
     const std::size_t selected_bins =
         region.last_bin - region.first_bin + 1U;
@@ -896,7 +897,8 @@ MixedFitResult fit_mixed_model(
             endpoints,
             q_values,
             valid_indices,
-            half_maximum_seed
+            half_maximum_seed,
+            core_fraction_policy
         );
     if (!selected_index.has_value()) {
         result.failure_reason = FitFailureReason::DegenerateCoreFraction;

@@ -149,6 +149,7 @@ constexpr std::uint64_t kMinimumRadialSliceSelectedCount = 0U;
  * @param binning Validated uniform binning.
  * @param apply_radial_slice_quality_cut Whether the configured radial kinetic
  *        slice threshold is evaluated for this histogram.
+ * @param core_fraction_policy Origin-dependent mixed-basin f_core policy.
  * @return Full/core regions plus three independent Gaussian fits and three
  *         independent mixed fits (Poisson, Neyman, Pearson).
  *
@@ -163,7 +164,8 @@ ShapeHistogramResult analyze_shape_histogram(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const HistogramBinningConfig& binning,
-    bool apply_radial_slice_quality_cut
+    bool apply_radial_slice_quality_cut,
+    MixedCoreFractionPolicy core_fraction_policy
 ) {
     const std::optional<StatisticalRegion> region =
         select_shape_region(bins, offset, binning);
@@ -329,7 +331,8 @@ ShapeHistogramResult analyze_shape_histogram(
         region.value(),
         FitEstimator::Poisson,
         gaussian,
-        half_maximum_seed.value()
+        half_maximum_seed.value(),
+        core_fraction_policy
     );
     MixedFitResult mixed_neyman = fit_mixed_model(
         family,
@@ -339,7 +342,8 @@ ShapeHistogramResult analyze_shape_histogram(
         region.value(),
         FitEstimator::Neyman,
         gaussian_neyman,
-        half_maximum_seed.value()
+        half_maximum_seed.value(),
+        core_fraction_policy
     );
     MixedFitResult mixed_pearson = fit_mixed_model(
         family,
@@ -349,7 +353,8 @@ ShapeHistogramResult analyze_shape_histogram(
         region.value(),
         FitEstimator::Pearson,
         gaussian_pearson,
-        half_maximum_seed.value()
+        half_maximum_seed.value(),
+        core_fraction_policy
     );
     return {
         region,
@@ -407,13 +412,15 @@ DeltaTHistogramResult analyze_delta_t_histogram(
  * @param apply_radial_mt_quality_cut Whether the radial N_selected threshold
  *        machinery applies to this one-dimensional radial mT slice. The
  *        current threshold is zero, so no non-empty slice is vetoed by it.
+ * @param core_fraction_policy Origin-dependent mixed-basin f_core policy.
  * @return Derived state with fits/moments complete and normalization empty.
  */
 DerivedHistogramSet analyze_histogram_set(
     const HBTHistogramConfig& config,
     const RawHistogramSet& raw,
     bool kinetic_slice,
-    bool apply_radial_mt_quality_cut
+    bool apply_radial_mt_quality_cut,
+    MixedCoreFractionPolicy core_fraction_policy
 ) {
     DerivedHistogramSet result{};
     for (std::size_t slot = 0U; slot < result.osl.size(); ++slot) {
@@ -424,7 +431,8 @@ DerivedHistogramSet analyze_histogram_set(
                 raw.osl.bins,
                 slot * config.osl.nbins,
                 config.osl,
-                false
+                false,
+                core_fraction_policy
             );
     }
     for (std::size_t slot = 0U; slot < result.radial.size(); ++slot) {
@@ -433,7 +441,8 @@ DerivedHistogramSet analyze_histogram_set(
             raw.radial.bins,
             slot * config.radial.nbins,
             config.radial,
-            apply_radial_mt_quality_cut
+            apply_radial_mt_quality_cut,
+            core_fraction_policy
         );
     }
     for (std::size_t slot = 0U; slot < result.delta_t.size(); ++slot) {
@@ -667,11 +676,20 @@ HistogramAnalysisState analyze_histograms(
                 raw_product.origins[origin];
             OriginDerivedHistogramState& derived_origin =
                 derived_product.origins[origin];
+            const HistogramOrigin histogram_origin = raw_histogram_origin_at(
+                config.origin_mode,
+                origin
+            );
+            const MixedCoreFractionPolicy core_fraction_policy =
+                histogram_origin == HistogramOrigin::PrimordialRescatteringDecay
+                ? MixedCoreFractionPolicy::RequireCoreAndTail
+                : MixedCoreFractionPolicy::AllowPureGaussian;
             derived_origin.global = analyze_histogram_set(
                 config.histogram_config,
                 raw_origin.global,
                 false,
-                false
+                false,
+                core_fraction_policy
             );
             derived_origin.slices.resize(raw_origin.slices.size());
             const bool apply_radial_mt_quality_cut =
@@ -684,7 +702,8 @@ HistogramAnalysisState analyze_histograms(
                     config.histogram_config,
                     raw_origin.slices[slice],
                     true,
-                    apply_radial_mt_quality_cut
+                    apply_radial_mt_quality_cut,
+                    core_fraction_policy
                 );
             }
         }

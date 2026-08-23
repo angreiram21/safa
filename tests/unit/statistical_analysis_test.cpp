@@ -319,7 +319,8 @@ bool verify_half_maximum_anchored_mixed_selection() {
             endpoints,
             q_values,
             valid_indices,
-            4.10
+            4.10,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         );
     if (!selected.has_value() || selected.value() != 1U) {
         return fail(
@@ -358,7 +359,8 @@ bool verify_degenerate_fraction_basin_filter() {
             endpoints,
             q_values,
             valid_indices,
-            3.934
+            3.934,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         );
     if (!selected.has_value() || selected.value() != 3U) {
         return fail(
@@ -369,8 +371,8 @@ bool verify_degenerate_fraction_basin_filter() {
 }
 
 /**
- * @brief Verify the physical f_core basin bounds are strict and exhaustive.
- * @return true when basins at 0.1 or 0.9 yield no selectable mixed solution.
+ * @brief Verify the PRD physical f_core basin bounds remain strict.
+ * @return true when PRD basins at 0.1 or 0.9 yield no selectable solution.
  */
 bool verify_no_nondegenerate_fraction_basin() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
@@ -387,10 +389,75 @@ bool verify_no_nondegenerate_fraction_basin() {
             endpoints,
             q_values,
             valid_indices,
-            3.2
+            3.2,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         );
     if (selected.has_value()) {
-        return fail("strict f_core basin bounds admitted a degenerate basin");
+        return fail("strict PRD f_core basin bounds admitted a degenerate basin");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify P/PR retain the Gaussian-limit basin while PRD rejects it.
+ * @return true when the same high-f basin is selectable only under the P/PR
+ *         policy and the lower 0.1 bound remains exclusive for both policies.
+ */
+bool verify_origin_specific_fraction_basin_policy() {
+    const std::vector<hbt::MixedBasinPoint> endpoints{
+        {std::log(3.00), std::log(4.00), 1.000},
+        {std::log(3.01), std::log(4.01), 1.000},
+        {std::log(6.00), std::log(3.00), 0.500},
+        {std::log(6.02), std::log(3.01), 0.500}
+    };
+    const std::vector<double> q_values{20.0, 19.0, 10.0, 9.0};
+    const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U};
+
+    const auto prd_selected = hbt::select_mixed_start_by_half_maximum_basin(
+        endpoints,
+        q_values,
+        valid_indices,
+        3.0,
+        hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+    );
+    if (!prd_selected.has_value() || prd_selected.value() != 3U) {
+        return fail("PRD did not reject the pure-Gaussian basin");
+    }
+
+    const auto p_pr_selected = hbt::select_mixed_start_by_half_maximum_basin(
+        endpoints,
+        q_values,
+        valid_indices,
+        3.0,
+        hbt::MixedCoreFractionPolicy::AllowPureGaussian
+    );
+    if (!p_pr_selected.has_value() || p_pr_selected.value() != 1U) {
+        return fail("P/PR did not admit the pure-Gaussian basin");
+    }
+
+    const std::vector<hbt::MixedBasinPoint> lower_boundary{
+        {std::log(3.0), std::log(4.0), 0.100},
+        {std::log(3.01), std::log(4.01), 0.100}
+    };
+    const std::vector<double> lower_q{2.0, 1.0};
+    const std::vector<std::size_t> lower_indices{0U, 1U};
+    if (hbt::select_mixed_start_by_half_maximum_basin(
+            lower_boundary,
+            lower_q,
+            lower_indices,
+            3.0,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+        ).has_value() ||
+        hbt::select_mixed_start_by_half_maximum_basin(
+            lower_boundary,
+            lower_q,
+            lower_indices,
+            3.0,
+            hbt::MixedCoreFractionPolicy::AllowPureGaussian
+        ).has_value()) {
+        return fail(
+            "origin-specific policy admitted the exclusive f_core=0.1 boundary"
+        );
     }
     return true;
 }
@@ -542,6 +609,7 @@ int main() {
         !verify_half_maximum_anchored_mixed_selection() ||
         !verify_degenerate_fraction_basin_filter() ||
         !verify_no_nondegenerate_fraction_basin() ||
+        !verify_origin_specific_fraction_basin_policy() ||
         !verify_empty_regions() || !verify_delta_t_region() ||
         !verify_normalization() || !verify_delta_t_statistics() ||
         !verify_invalid_delta_t_variance() ||
