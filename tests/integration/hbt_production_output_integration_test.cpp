@@ -394,8 +394,14 @@ bool verify_analysis_and_output() {
         valid_parameters.find("pearson") == std::string::npos ||
         valid_parameters.find("consensus_size") == std::string::npos ||
         valid_parameters.find("core_start0_valid") == std::string::npos ||
+        valid_parameters.find("core_start0_R_core") == std::string::npos ||
+        valid_parameters.find("core_start0_R_tail") == std::string::npos ||
+        valid_parameters.find("core_start0_f_core") == std::string::npos ||
         valid_parameters.find("core_start4_valid") == std::string::npos ||
         valid_parameters.find("core_start35_valid") == std::string::npos ||
+        valid_parameters.find("core_start35_R_core") == std::string::npos ||
+        valid_parameters.find("core_start35_R_tail") == std::string::npos ||
+        valid_parameters.find("core_start35_f_core") == std::string::npos ||
         valid_parameters.find("tail_below_core") != std::string::npos ||
         valid_parameters.find("start_a_valid") != std::string::npos ||
         valid_parameters.find("start_b_valid") != std::string::npos) {

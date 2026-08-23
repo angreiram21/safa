@@ -942,8 +942,11 @@ the basin minimizing `|mean(log(R_core)) - log(R_HM)|` is selected. This is a
 relative-scale criterion and imposes no ordering between `R_core` and `R_tail`.
 Within that selected basin, the valid minimum with the smallest objective value
 is used for MINOS. Basin multiplicity is retained only as a stability diagnostic
-and is not an acceptance veto. Poisson remains the default estimator used by
-backward-compatible plotting columns.
+and is not an acceptance veto. For diagnostic studies, the terminal physical
+`R_core`, `R_tail`, and `f_core` coordinates of every one of the 36 starts are
+also serialized, independently of whether that start is ultimately accepted.
+These endpoint columns do not participate in fit selection. Poisson remains the
+default estimator used by backward-compatible plotting columns.
 
 The one-dimensional radial-mT count-threshold machinery is retained, but its
 current value is `N_selected >= 0`, so no non-empty slice is vetoed by this
@@ -1272,8 +1275,9 @@ alternatives are written as `gaussian_fit_pdf_neyman`,
 parameter table contains an explicit `estimator` column. It records the exact
 region used by each fit, independent Poisson/Neyman/Pearson Gaussian `R_G_core`,
 and independent mixed `R_core`, `R_tail`, and `f_core` values, asymmetric MINOS
-errors, objective minima, covariance state, all 36 mixed-start diagnostics, and
-the selected-minimum basin multiplicity diagnostic.
+errors, objective minima, covariance state, all 36 mixed-start diagnostics,
+the terminal `R_core`, `R_tail`, and `f_core` coordinates for every mixed start,
+and the selected-minimum basin multiplicity diagnostic.
 Delta-t directories contain
 `statistics.csv` with status, `N_selected`, mean, sigma and sigma error and,
 when a region exists, `distribution.csv`.
@@ -1409,8 +1413,9 @@ The standard CTest suite contains 51 tests covering:
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
   identify the R_HM-anchored Gaussian-core basin, select the smallest objective
-  inside that basin, retain basin multiplicity diagnostically, and validate
-  MIGRAD/covariance/MINOS states and asymmetric physical errors;
+  inside that basin, retain basin multiplicity and every start endpoint
+  diagnostically, and validate MIGRAD/covariance/MINOS states and asymmetric
+  physical errors;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`
   traceability metadata, fit/statistics CSVs and omission of invalid fit curves;

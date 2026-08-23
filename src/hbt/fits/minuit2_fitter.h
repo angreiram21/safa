@@ -55,7 +55,8 @@ namespace hbt {
  * @param gaussian_result Valid 10%-core Gaussian result from the same estimator;
  *        its fitted radius provides the R_G member of the core-seed set.
  * @param half_maximum_seed Gaussian R seed converted from histogram FWHM.
- * @return Complete 36-start fit result and explicit diagnostics.
+ * @return Complete 36-start fit result, terminal start endpoints, and explicit
+ *         diagnostics.
  * @throws std::out_of_range If the selected raw slot is unavailable.
  *
  * The deterministic Cartesian product is
@@ -64,8 +65,11 @@ namespace hbt {
  * grouped into numerical basins. The basin whose geometric-mean R_core is
  * closest to R_HM in logarithmic relative scale is identified as the physical
  * Gaussian-core basin; the smallest q inside that basin is selected for MINOS.
- * Basin multiplicity is diagnostic only, and no ordering of R_core and R_tail
- * is imposed.
+ * The terminal physical R_core, R_tail and f_core coordinates of every start
+ * are retained for post-run basin inspection, including finite endpoints from
+ * starts that fail the acceptance contract. These endpoint diagnostics do not
+ * participate in basin selection or fit validity. Basin multiplicity is
+ * diagnostic only, and no ordering of R_core and R_tail is imposed.
  */
 [[nodiscard]] MixedFitResult fit_mixed_model(
     FitObservableFamily family,

@@ -193,6 +193,9 @@ bool verify_mixed_multistart_and_minos() {
         if (selected_index >= hbt::MixedFitResult::kCoreStartCount ||
             hbt::fit_failure_from_migrad(mixed.starts[selected_index]) !=
                 hbt::FitFailureReason::None ||
+            !mixed.start_endpoints[selected_index].core_radius.has_value() ||
+            !mixed.start_endpoints[selected_index].tail_radius.has_value() ||
+            !mixed.start_endpoints[selected_index].core_fraction.has_value() ||
             !mixed.q_min.has_value() ||
             !mixed.starts[selected_index].q_min.has_value() ||
             std::fabs(
@@ -217,6 +220,24 @@ bool verify_mixed_multistart_and_minos() {
             !mixed.minos_core_fraction.upper_valid) {
             return fail(
                 "selected mixed estimator minimum did not pass required MINOS"
+            );
+        }
+        const hbt::MixedStartEndpointDiagnostic& selected_endpoint =
+            mixed.start_endpoints[selected_index];
+        if (std::fabs(
+                selected_endpoint.core_radius.value() -
+                mixed.core_radius->value
+            ) > 1.0e-10 ||
+            std::fabs(
+                selected_endpoint.tail_radius.value() -
+                mixed.tail_radius->value
+            ) > 1.0e-10 ||
+            std::fabs(
+                selected_endpoint.core_fraction.value() -
+                mixed.core_fraction->value
+            ) > 1.0e-10) {
+            return fail(
+                "selected mixed start endpoint does not match published values"
             );
         }
         if (mixed.core_fraction->value <= 0.0 ||

@@ -145,6 +145,21 @@ struct MixedBasinPoint {
     double core_fraction;    ///< Final f_core.
 };
 
+/**
+ * @brief Final physical endpoint retained for one deterministic mixed start.
+ *
+ * Values are recorded independently of whether the corresponding MIGRAD start
+ * is ultimately accepted. A field is empty only when the terminal Minuit state
+ * cannot be converted to a finite physical value. These diagnostics are used
+ * solely to inspect the geometry of the 36-start basin search and do not alter
+ * fit selection or validity.
+ */
+struct MixedStartEndpointDiagnostic {
+    std::optional<double> core_radius;   ///< Final physical R_core when finite.
+    std::optional<double> tail_radius;   ///< Final physical R_tail when finite.
+    std::optional<double> core_fraction; ///< Final physical f_core when finite.
+};
+
 /** Numerical same-basin tolerance for each log-radius coordinate. */
 constexpr double kMixedBasinLogRadiusTolerance = 0.01;
 
@@ -310,6 +325,8 @@ struct MixedFitResult {
     FitEstimator estimator;            ///< Objective minimized by this fit only.
     /// Diagnostics for all 36 deterministic starts.
     std::array<MigradDiagnostic, kCoreStartCount> starts;
+    /// Final physical endpoint of every start, retained for basin diagnostics.
+    std::array<MixedStartEndpointDiagnostic, kCoreStartCount> start_endpoints;
     std::size_t starts_attempted;      ///< Number of starts actually run.
     std::size_t valid_starts;          ///< Starts with valid evaluable MIGRAD state.
     std::size_t consensus_size;        ///< Same-basin multiplicity of selected minimum.

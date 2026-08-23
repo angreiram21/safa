@@ -98,11 +98,16 @@ MixedFitResult invalid_mixed(
     const MigradDiagnostic empty = unattempted_migrad();
     std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{};
     starts.fill(empty);
+    std::array<
+        MixedStartEndpointDiagnostic,
+        MixedFitResult::kCoreStartCount
+    > start_endpoints{};
     return {
         false,
         reason,
         estimator,
         starts,
+        start_endpoints,
         0U,
         0U,
         0U,
@@ -569,6 +574,33 @@ struct MixedStartOutcome {
 };
 
 /**
+ * @brief Convert one mixed terminal point to finite physical diagnostics.
+ * @param endpoint Final Minuit external coordinates for one deterministic start.
+ * @return Optional physical R_core, R_tail and f_core values.
+ *
+ * The conversion is diagnostic only. It is performed for every attempted start,
+ * including starts that later fail the MIGRAD acceptance contract. Non-finite or
+ * non-positive radius transforms and non-finite fractions are left empty.
+ */
+MixedStartEndpointDiagnostic mixed_start_endpoint_diagnostic(
+    const MixedBasinPoint& endpoint
+) {
+    MixedStartEndpointDiagnostic diagnostic{};
+    const double core_radius = std::exp(endpoint.log_core_radius);
+    const double tail_radius = std::exp(endpoint.log_tail_radius);
+    if (std::isfinite(core_radius) && core_radius > 0.0) {
+        diagnostic.core_radius = core_radius;
+    }
+    if (std::isfinite(tail_radius) && tail_radius > 0.0) {
+        diagnostic.tail_radius = tail_radius;
+    }
+    if (std::isfinite(endpoint.core_fraction)) {
+        diagnostic.core_fraction = endpoint.core_fraction;
+    }
+    return diagnostic;
+}
+
+/**
  * @brief Count valid starts in the connected basin containing one start.
  * @param outcomes Endpoints for every attempted start.
  * @param valid_indices Indices with valid evaluable MIGRAD minima.
@@ -821,6 +853,8 @@ MixedFitResult fit_mixed_model(
                     start.first.UserState().Value(1U),
                     start.first.UserState().Value(2U)
                 };
+                result.start_endpoints[index] =
+                    mixed_start_endpoint_diagnostic(endpoint);
                 outcomes.push_back({
                     std::move(start.first), start.second, endpoint
                 });

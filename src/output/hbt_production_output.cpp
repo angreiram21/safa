@@ -486,7 +486,10 @@ void write_parameter_header(std::ostream& output) {
                << ",core_start" << index << "_above_max_edm"
                << ",core_start" << index << "_objective_failure"
                << ",core_start" << index << "_function_calls"
-               << ",core_start" << index << "_q_min";
+               << ",core_start" << index << "_q_min"
+               << ",core_start" << index << "_R_core"
+               << ",core_start" << index << "_R_tail"
+               << ",core_start" << index << "_f_core";
     }
     output << '\n';
 }
@@ -522,7 +525,7 @@ void write_empty_mixed_fields(std::ostream& output) {
     for (std::size_t index = 0U;
          index < hbt::MixedFitResult::kCoreStartCount;
          ++index) {
-        output << ",,,,,,,,";
+        output << ",,,,,,,,,,,";
     }
 }
 
@@ -591,8 +594,22 @@ void write_mixed_shared_fields(
     if (result.selected_core_start.has_value()) {
         output << result.selected_core_start.value();
     }
-    for (const hbt::MigradDiagnostic& start : result.starts) {
-        write_migrad_fields(output, start);
+    for (std::size_t index = 0U;
+         index < hbt::MixedFitResult::kCoreStartCount;
+         ++index) {
+        write_migrad_fields(output, result.starts[index]);
+        output << ',';
+        write_optional_double(
+            output, result.start_endpoints[index].core_radius
+        );
+        output << ',';
+        write_optional_double(
+            output, result.start_endpoints[index].tail_radius
+        );
+        output << ',';
+        write_optional_double(
+            output, result.start_endpoints[index].core_fraction
+        );
     }
 }
 

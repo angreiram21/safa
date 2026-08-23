@@ -77,11 +77,16 @@ MixedFitResult invalid_mixed_result(
     const MigradDiagnostic empty = unattempted_migrad();
     std::array<MigradDiagnostic, MixedFitResult::kCoreStartCount> starts{};
     starts.fill(empty);
+    std::array<
+        MixedStartEndpointDiagnostic,
+        MixedFitResult::kCoreStartCount
+    > start_endpoints{};
     return {
         false,
         reason,
         estimator,
         starts,
+        start_endpoints,
         0U,
         0U,
         0U,
