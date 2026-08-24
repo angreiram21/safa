@@ -399,19 +399,17 @@ bool verify_no_nondegenerate_fraction_basin() {
 }
 
 /**
- * @brief Verify P/PR retain the Gaussian-limit basin while PRD rejects it.
- * @return true when the same high-f basin is selectable only under the P/PR
- *         policy and the lower 0.1 bound remains exclusive for both policies.
+ * @brief Verify origin-specific mixed-fraction bounds reject degeneracies.
+ * @return true when P/PR reject f_core >= 0.99 but admit 0.98, PRD keeps its
+ *         stricter upper bound, and the lower 0.1 bound remains exclusive.
  */
 bool verify_origin_specific_fraction_basin_policy() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
         {std::log(3.00), std::log(4.00), 1.000},
-        {std::log(3.01), std::log(4.01), 1.000},
-        {std::log(6.00), std::log(3.00), 0.500},
-        {std::log(6.02), std::log(3.01), 0.500}
+        {std::log(6.00), std::log(3.00), 0.500}
     };
-    const std::vector<double> q_values{20.0, 19.0, 10.0, 9.0};
-    const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U};
+    const std::vector<double> q_values{20.0, 10.0};
+    const std::vector<std::size_t> valid_indices{0U, 1U};
 
     const auto prd_selected = hbt::select_mixed_start_by_half_maximum_basin(
         endpoints,
@@ -420,40 +418,69 @@ bool verify_origin_specific_fraction_basin_policy() {
         3.0,
         hbt::MixedCoreFractionPolicy::RequireCoreAndTail
     );
-    if (!prd_selected.has_value() || prd_selected.value() != 3U) {
-        return fail("PRD did not reject the pure-Gaussian basin");
-    }
-
     const auto p_pr_selected = hbt::select_mixed_start_by_half_maximum_basin(
         endpoints,
         q_values,
         valid_indices,
         3.0,
-        hbt::MixedCoreFractionPolicy::AllowPureGaussian
+        hbt::MixedCoreFractionPolicy::RejectPureGaussian
     );
-    if (!p_pr_selected.has_value() || p_pr_selected.value() != 1U) {
-        return fail("P/PR did not admit the pure-Gaussian basin");
+    if (!prd_selected.has_value() || prd_selected.value() != 1U ||
+        !p_pr_selected.has_value() || p_pr_selected.value() != 1U) {
+        return fail("origin policy did not reject the pure-Gaussian basin");
+    }
+
+    const std::vector<hbt::MixedBasinPoint> p_pr_only{
+        {std::log(3.0), std::log(4.0), 0.980}
+    };
+    const std::vector<double> single_q{1.0};
+    const std::vector<std::size_t> single_index{0U};
+    if (hbt::select_mixed_start_by_half_maximum_basin(
+            p_pr_only,
+            single_q,
+            single_index,
+            3.0,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+        ).has_value() ||
+        !hbt::select_mixed_start_by_half_maximum_basin(
+            p_pr_only,
+            single_q,
+            single_index,
+            3.0,
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian
+        ).has_value()) {
+        return fail("origin-specific upper f_core bounds are incorrect");
+    }
+
+    const std::vector<hbt::MixedBasinPoint> upper_boundary{
+        {std::log(3.0), std::log(4.0), 0.990}
+    };
+    if (hbt::select_mixed_start_by_half_maximum_basin(
+            upper_boundary,
+            single_q,
+            single_index,
+            3.0,
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian
+        ).has_value()) {
+        return fail("P/PR policy admitted the exclusive f_core=0.99 boundary");
     }
 
     const std::vector<hbt::MixedBasinPoint> lower_boundary{
-        {std::log(3.0), std::log(4.0), 0.100},
-        {std::log(3.01), std::log(4.01), 0.100}
+        {std::log(3.0), std::log(4.0), 0.100}
     };
-    const std::vector<double> lower_q{2.0, 1.0};
-    const std::vector<std::size_t> lower_indices{0U, 1U};
     if (hbt::select_mixed_start_by_half_maximum_basin(
             lower_boundary,
-            lower_q,
-            lower_indices,
+            single_q,
+            single_index,
             3.0,
             hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         ).has_value() ||
         hbt::select_mixed_start_by_half_maximum_basin(
             lower_boundary,
-            lower_q,
-            lower_indices,
+            single_q,
+            single_index,
             3.0,
-            hbt::MixedCoreFractionPolicy::AllowPureGaussian
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian
         ).has_value()) {
         return fail(
             "origin-specific policy admitted the exclusive f_core=0.1 boundary"

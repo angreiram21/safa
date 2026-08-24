@@ -939,8 +939,8 @@ using the final `(log(R_core), log(R_tail), f_core)` coordinates. Each basin is
 represented by the arithmetic mean of `f_core` and of `log(R_core)`. Before the
 half-maximum comparison, an origin-dependent physical core-fraction filter is
 applied. PRD requires `0.1 < mean(f_core) < 0.9`, so both Gaussian core and
-exponential tail remain present. P and PR require `0.1 < mean(f_core) <= 1`,
-allowing the physically admissible pure-Gaussian limit while still rejecting
+exponential tail remain present. P and PR require `0.1 < mean(f_core) < 0.99`,
+rejecting the degenerate near-pure-Gaussian limit while still rejecting
 exponential-dominated basins with `mean(f_core) <= 0.1`. If no basin survives
 the applicable origin policy, the mixed fit is invalidated with
 `degenerate_core_fraction`.
@@ -1422,7 +1422,7 @@ The standard CTest suite contains 51 tests covering:
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
   reject basins using the origin-specific physical `f_core` interval: strict
-  `(0.1,0.9)` for PRD and `(0.1,1]` for P/PR; identify the R_HM-anchored
+  `(0.1,0.9)` for PRD and `(0.1,0.99)` for P/PR; identify the R_HM-anchored
   Gaussian-core basin among the survivors, select the smallest objective inside
   that basin, retain basin multiplicity and every start endpoint diagnostically,
   and validate MIGRAD/covariance/MINOS states and asymmetric physical errors;

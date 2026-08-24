@@ -159,8 +159,9 @@ std::optional<std::size_t> select_mixed_start_by_half_maximum_basin(
                 upper_bound_valid =
                     mean_core_fraction < kMixedPhysicalCoreFractionMax;
                 break;
-            case MixedCoreFractionPolicy::AllowPureGaussian:
-                upper_bound_valid = mean_core_fraction <= 1.0;
+            case MixedCoreFractionPolicy::RejectPureGaussian:
+                upper_bound_valid =
+                    mean_core_fraction < kMixedPPrCoreFractionMax;
                 break;
         }
         if (!lower_bound_valid || !upper_bound_valid) {

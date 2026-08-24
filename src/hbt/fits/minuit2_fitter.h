@@ -65,8 +65,8 @@ namespace hbt {
  * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
  * grouped into numerical basins. Before any R_HM comparison, basin fractions
  * are filtered by the supplied origin policy: PRD requires
- * 0.1 < mean(f_core) < 0.9, while P and PR allow
- * 0.1 < mean(f_core) <= 1 so a pure-Gaussian limit remains physical. Among
+ * 0.1 < mean(f_core) < 0.9, while P and PR require
+ * 0.1 < mean(f_core) < 0.99 to reject the near-pure-Gaussian degeneracy. Among
  * the remaining
  * basins, the one whose geometric-mean R_core is closest to R_HM in logarithmic
  * relative scale is identified as the physical Gaussian-core basin; the

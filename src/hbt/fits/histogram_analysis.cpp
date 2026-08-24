@@ -683,7 +683,7 @@ HistogramAnalysisState analyze_histograms(
             const MixedCoreFractionPolicy core_fraction_policy =
                 histogram_origin == HistogramOrigin::PrimordialRescatteringDecay
                 ? MixedCoreFractionPolicy::RequireCoreAndTail
-                : MixedCoreFractionPolicy::AllowPureGaussian;
+                : MixedCoreFractionPolicy::RejectPureGaussian;
             derived_origin.global = analyze_histogram_set(
                 config.histogram_config,
                 raw_origin.global,

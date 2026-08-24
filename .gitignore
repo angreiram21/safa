@@ -17,4 +17,5 @@
 scripts/plot_paper_figures.py
 
 # Otuput/Results run
-/output
+/output*
+/paper*

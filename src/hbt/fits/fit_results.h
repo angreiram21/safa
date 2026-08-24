@@ -38,12 +38,13 @@ enum class FitEstimator {
 /**
  * @brief Origin-dependent physical admissibility policy for mixed-fit basins.
  *
- * PRD requires both Gaussian core and exponential tail to remain appreciable,
- * whereas P and PR may physically reduce to a pure-Gaussian limit.
+ * PRD requires both Gaussian core and exponential tail to remain appreciable.
+ * P and PR also require a genuinely mixed solution and reject the degenerate
+ * near-pure-Gaussian limit.
  */
 enum class MixedCoreFractionPolicy {
-    RequireCoreAndTail, ///< PRD: require 0.1 < mean(f_core) < 0.9.
-    AllowPureGaussian  ///< P/PR: require 0.1 < mean(f_core) <= 1.
+    RequireCoreAndTail,   ///< PRD: require 0.1 < mean(f_core) < 0.9.
+    RejectPureGaussian   ///< P/PR: require 0.1 < mean(f_core) < 0.99.
 };
 
 /**
@@ -183,6 +184,9 @@ constexpr double kMixedPhysicalCoreFractionMin = 0.1;
 /** PRD-only upper exclusive f_core bound for a non-degenerate mixed basin. */
 constexpr double kMixedPhysicalCoreFractionMax = 0.9;
 
+/** P/PR upper exclusive f_core bound rejecting the Gaussian-limit degeneracy. */
+constexpr double kMixedPPrCoreFractionMax = 0.99;
+
 /**
  * @brief Test whether two mixed endpoints represent the same numerical basin.
  * @param lhs First converged mixed endpoint.
@@ -238,9 +242,9 @@ constexpr double kMixedPhysicalCoreFractionMax = 0.9;
  * R_core scale. Basins are eligible only when their representative fraction
  * satisfies the origin-specific physical core-fraction policy. PRD requires
  * 0.1 < mean(f_core) < 0.9, while P and PR require
- * 0.1 < mean(f_core) <= 1 so that a pure-Gaussian limit remains admissible.
- * Basins outside the applicable interval are classified as degenerate and
- * cannot participate in physical-basin selection.
+ * 0.1 < mean(f_core) < 0.99 so that near-pure-Gaussian degeneracies are
+ * rejected. Basins outside the applicable interval are classified as
+ * degenerate and cannot participate in physical-basin selection.
  *
  * Among eligible basins, the Gaussian-core basin minimizes
  * |mean(log(R_core)) - log(R_HM)| = |log(R_core,geom / R_HM)|. No ordering
