@@ -63,20 +63,21 @@ namespace hbt {
  * The deterministic Cartesian product is
  * R_core={R_G,0.5R_HM,R_HM,2R_HM},
  * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
- * grouped into numerical basins. Before any R_HM comparison, basin fractions
- * are filtered by the supplied origin policy: PRD requires
- * 0.1 < mean(f_core) < 0.9, while P and PR require
+ * grouped into numerical basins. Basin fractions are filtered by the supplied
+ * origin policy: PRD requires 0.1 < mean(f_core) < 0.9, while P and PR require
  * 0.1 < mean(f_core) < 0.99 to reject the near-pure-Gaussian degeneracy. Among
- * the remaining
- * basins, the one whose geometric-mean R_core is closest to R_HM in logarithmic
- * relative scale is identified as the physical Gaussian-core basin; the
- * smallest q inside that basin is selected for MINOS. If every basin is
- * degenerate, the mixed fit is invalidated with DegenerateCoreFraction.
+ * the remaining basins, every origin selects the basin reached by the largest
+ * number of converged deterministic starts. Equal-size basins are ranked by
+ * their smallest q and then by lowest start index. The smallest-q start inside
+ * the selected basin goes to MINOS. R_HM remains in the deterministic core-seed
+ * set but does not rank final basins. If every basin is degenerate, the mixed
+ * fit is invalidated with DegenerateCoreFraction.
  * The terminal physical R_core, R_tail and f_core coordinates of every start
  * are retained for post-run basin inspection, including finite endpoints from
  * starts that fail the acceptance contract. These endpoint diagnostics do not
  * participate in basin selection or fit validity. Basin multiplicity is
- * diagnostic only, and no ordering of R_core and R_tail is imposed.
+ * diagnostic only after basin selection, and no ordering of R_core and R_tail
+ * is imposed.
  */
 [[nodiscard]] MixedFitResult fit_mixed_model(
     FitObservableFamily family,

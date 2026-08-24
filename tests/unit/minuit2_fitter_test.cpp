@@ -204,7 +204,7 @@ bool verify_mixed_multistart_and_minos() {
             ) > 1.0e-10 ||
             mixed.consensus_size == 0U) {
             return fail(
-                "mixed estimator did not preserve its non-degenerate R_HM-basin selection"
+                "mixed estimator did not preserve its selected non-degenerate basin"
             );
         }
         if (!mixed.fully_valid || !mixed.core_radius.has_value() ||

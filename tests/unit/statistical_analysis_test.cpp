@@ -299,46 +299,51 @@ bool verify_mixed_basin_grouping() {
 }
 
 /**
- * @brief Verify R_HM chooses among non-degenerate basins before q ranks minima.
- * @return true when a lower-q remote non-degenerate basin loses to the
- *         R_HM-anchored basin and the lowest q inside that basin is selected.
+ * @brief Verify every origin prefers the most populated admissible mixed basin.
+ * @return true when a three-start basin wins over a closer-to-R_HM two-start
+ *         basin and the lowest q inside the selected basin is returned.
  */
-bool verify_half_maximum_anchored_mixed_selection() {
+bool verify_largest_mixed_basin_selection() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
+        // Two-start basin around the historical R_HM anchor.
         {std::log(4.00), std::log(6.00), 0.650},
         {std::log(4.02), std::log(6.03), 0.646},
+        // Three-start remote basin.
         {std::log(14.00), std::log(3.50), 0.280},
         {std::log(14.04), std::log(3.52), 0.284},
         {std::log(13.96), std::log(3.48), 0.277}
     };
-    const std::vector<double> q_values{120.0, 110.0, 90.0, 80.0, 70.0};
+    const std::vector<double> q_values{20.0, 10.0, 90.0, 80.0, 70.0};
     const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U, 4U};
 
-    const std::optional<std::size_t> selected =
-        hbt::select_mixed_start_by_half_maximum_basin(
-            endpoints,
-            q_values,
-            valid_indices,
-            4.10,
-            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
-        );
-    if (!selected.has_value() || selected.value() != 1U) {
-        return fail(
-            "R_HM-anchored basin selection preferred a remote lower-q basin"
-        );
-    }
-    if (!(q_values[4U] < q_values[selected.value()])) {
-        return fail(
-            "R_HM basin test does not contain the intended lower global q"
-        );
+    for (const auto policy : {
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail,
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian}) {
+        const std::optional<std::size_t> selected =
+            hbt::select_mixed_start_by_largest_basin(
+                endpoints,
+                q_values,
+                valid_indices,
+                policy
+            );
+        if (!selected.has_value() || selected.value() != 4U) {
+            return fail(
+                "mixed basin selection did not prefer the largest admissible basin"
+            );
+        }
+        if (!(q_values[1U] < q_values[selected.value()])) {
+            return fail(
+                "largest-basin test lacks the intended lower-q smaller basin"
+            );
+        }
     }
     return true;
 }
 
 /**
- * @brief Verify degenerate-f basins are removed before the R_HM comparison.
+ * @brief Verify degenerate-f basins are removed before size ranking.
  * @return true when a realistic non-degenerate basin is selected even though
- *         degenerate basins are closer to R_HM or have a lower q.
+ *         degenerate basins may have a lower q.
  */
 bool verify_degenerate_fraction_basin_filter() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
@@ -355,11 +360,10 @@ bool verify_degenerate_fraction_basin_filter() {
     const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U, 4U, 5U};
 
     const std::optional<std::size_t> selected =
-        hbt::select_mixed_start_by_half_maximum_basin(
+        hbt::select_mixed_start_by_largest_basin(
             endpoints,
             q_values,
             valid_indices,
-            3.934,
             hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         );
     if (!selected.has_value() || selected.value() != 3U) {
@@ -385,11 +389,10 @@ bool verify_no_nondegenerate_fraction_basin() {
     const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U};
 
     const std::optional<std::size_t> selected =
-        hbt::select_mixed_start_by_half_maximum_basin(
+        hbt::select_mixed_start_by_largest_basin(
             endpoints,
             q_values,
             valid_indices,
-            3.2,
             hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         );
     if (selected.has_value()) {
@@ -411,18 +414,16 @@ bool verify_origin_specific_fraction_basin_policy() {
     const std::vector<double> q_values{20.0, 10.0};
     const std::vector<std::size_t> valid_indices{0U, 1U};
 
-    const auto prd_selected = hbt::select_mixed_start_by_half_maximum_basin(
+    const auto prd_selected = hbt::select_mixed_start_by_largest_basin(
         endpoints,
         q_values,
         valid_indices,
-        3.0,
         hbt::MixedCoreFractionPolicy::RequireCoreAndTail
     );
-    const auto p_pr_selected = hbt::select_mixed_start_by_half_maximum_basin(
+    const auto p_pr_selected = hbt::select_mixed_start_by_largest_basin(
         endpoints,
         q_values,
         valid_indices,
-        3.0,
         hbt::MixedCoreFractionPolicy::RejectPureGaussian
     );
     if (!prd_selected.has_value() || prd_selected.value() != 1U ||
@@ -435,18 +436,16 @@ bool verify_origin_specific_fraction_basin_policy() {
     };
     const std::vector<double> single_q{1.0};
     const std::vector<std::size_t> single_index{0U};
-    if (hbt::select_mixed_start_by_half_maximum_basin(
+    if (hbt::select_mixed_start_by_largest_basin(
             p_pr_only,
             single_q,
             single_index,
-            3.0,
             hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         ).has_value() ||
-        !hbt::select_mixed_start_by_half_maximum_basin(
+        !hbt::select_mixed_start_by_largest_basin(
             p_pr_only,
             single_q,
             single_index,
-            3.0,
             hbt::MixedCoreFractionPolicy::RejectPureGaussian
         ).has_value()) {
         return fail("origin-specific upper f_core bounds are incorrect");
@@ -455,11 +454,10 @@ bool verify_origin_specific_fraction_basin_policy() {
     const std::vector<hbt::MixedBasinPoint> upper_boundary{
         {std::log(3.0), std::log(4.0), 0.990}
     };
-    if (hbt::select_mixed_start_by_half_maximum_basin(
+    if (hbt::select_mixed_start_by_largest_basin(
             upper_boundary,
             single_q,
             single_index,
-            3.0,
             hbt::MixedCoreFractionPolicy::RejectPureGaussian
         ).has_value()) {
         return fail("P/PR policy admitted the exclusive f_core=0.99 boundary");
@@ -468,23 +466,56 @@ bool verify_origin_specific_fraction_basin_policy() {
     const std::vector<hbt::MixedBasinPoint> lower_boundary{
         {std::log(3.0), std::log(4.0), 0.100}
     };
-    if (hbt::select_mixed_start_by_half_maximum_basin(
+    if (hbt::select_mixed_start_by_largest_basin(
             lower_boundary,
             single_q,
             single_index,
-            3.0,
             hbt::MixedCoreFractionPolicy::RequireCoreAndTail
         ).has_value() ||
-        hbt::select_mixed_start_by_half_maximum_basin(
+        hbt::select_mixed_start_by_largest_basin(
             lower_boundary,
             single_q,
             single_index,
-            3.0,
             hbt::MixedCoreFractionPolicy::RejectPureGaussian
         ).has_value()) {
         return fail(
             "origin-specific policy admitted the exclusive f_core=0.1 boundary"
         );
+    }
+    return true;
+}
+
+/**
+ * @brief Verify q breaks ties between equally populated admissible basins.
+ * @return true when both origin policies select the lower-q equal-size basin
+ *         and then the lower-q endpoint inside that basin.
+ */
+bool verify_equal_size_basin_q_tie_break() {
+    const std::vector<hbt::MixedBasinPoint> endpoints{
+        // First two-start basin.
+        {std::log(4.00), std::log(7.00), 0.650},
+        {std::log(4.02), std::log(7.03), 0.646},
+        // Second two-start basin with smaller basin q.
+        {std::log(8.00), std::log(3.50), 0.500},
+        {std::log(8.02), std::log(3.52), 0.504}
+    };
+    const std::vector<double> q_values{120.0, 110.0, 90.0, 80.0};
+    const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U};
+
+    for (const auto policy : {
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail,
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian}) {
+        const auto selected = hbt::select_mixed_start_by_largest_basin(
+            endpoints,
+            q_values,
+            valid_indices,
+            policy
+        );
+        if (!selected.has_value() || selected.value() != 3U) {
+            return fail(
+                "equal-size mixed basins were not ranked by their smallest q"
+            );
+        }
     }
     return true;
 }
@@ -633,10 +664,11 @@ int main() {
         !verify_radial_half_maximum_rejects_endpoint_spike() ||
         !verify_gaussian_core_fallback() ||
         !verify_mixed_basin_grouping() ||
-        !verify_half_maximum_anchored_mixed_selection() ||
+        !verify_largest_mixed_basin_selection() ||
         !verify_degenerate_fraction_basin_filter() ||
         !verify_no_nondegenerate_fraction_basin() ||
         !verify_origin_specific_fraction_basin_policy() ||
+        !verify_equal_size_basin_q_tie_break() ||
         !verify_empty_regions() || !verify_delta_t_region() ||
         !verify_normalization() || !verify_delta_t_statistics() ||
         !verify_invalid_delta_t_variance() ||

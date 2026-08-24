@@ -936,26 +936,24 @@ remain completely independent.
 
 Numerically valid mixed MIGRAD minima are first grouped into numerical basins
 using the final `(log(R_core), log(R_tail), f_core)` coordinates. Each basin is
-represented by the arithmetic mean of `f_core` and of `log(R_core)`. Before the
-half-maximum comparison, an origin-dependent physical core-fraction filter is
-applied. PRD requires `0.1 < mean(f_core) < 0.9`, so both Gaussian core and
-exponential tail remain present. P and PR require `0.1 < mean(f_core) < 0.99`,
-rejecting the degenerate near-pure-Gaussian limit while still rejecting
-exponential-dominated basins with `mean(f_core) <= 0.1`. If no basin survives
-the applicable origin policy, the mixed fit is invalidated with
-`degenerate_core_fraction`.
+represented by the arithmetic mean of `f_core` for physical admissibility. PRD
+requires `0.1 < mean(f_core) < 0.9`, so both Gaussian core and exponential tail
+remain present. P and PR require `0.1 < mean(f_core) < 0.99`, rejecting the
+degenerate near-pure-Gaussian limit while still rejecting exponential-dominated
+basins with `mean(f_core) <= 0.1`. If no basin survives the applicable origin
+policy, the mixed fit is invalidated with `degenerate_core_fraction`.
 
-Among the non-degenerate basins, the physical Gaussian-core basin is identified
-by the observed half-maximum scale: the basin minimizing
-`|mean(log(R_core)) - log(R_HM)|` is selected. This is a relative-scale criterion
-and imposes no ordering between `R_core` and `R_tail`. Within that selected
-basin, the valid minimum with the smallest objective value is used for MINOS.
-Basin multiplicity is retained only as a stability diagnostic and is not an
-acceptance veto. For diagnostic studies, the terminal physical `R_core`,
-`R_tail`, and `f_core` coordinates of every one of the 36 starts are also
-serialized, independently of whether that start is ultimately accepted. These
-endpoint columns do not participate in fit selection. Poisson remains the
-default estimator used by backward-compatible plotting columns.
+Among the non-degenerate basins, the basin reached by the largest number of the
+36 deterministic starts is selected. If two basins have the same multiplicity,
+the basin with the smallest objective value wins; a remaining exact tie is
+broken by the lowest start index. Within the selected basin, the valid minimum
+with the smallest objective value is used for MINOS. `R_HM` remains part of the
+deterministic `R_core` seed set but no longer ranks final basins. No ordering
+between `R_core` and `R_tail` is imposed. For diagnostic studies, the terminal
+physical `R_core`, `R_tail`, and `f_core` coordinates of every one of the 36
+starts are also serialized, independently of whether that start is ultimately
+accepted. Poisson remains the default estimator used by backward-compatible
+plotting columns.
 
 The one-dimensional radial-mT count-threshold machinery is retained, but its
 current value is `N_selected >= 0`, so no non-empty slice is vetoed by this
@@ -1422,9 +1420,10 @@ The standard CTest suite contains 51 tests covering:
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
   reject basins using the origin-specific physical `f_core` interval: strict
-  `(0.1,0.9)` for PRD and `(0.1,0.99)` for P/PR; identify the R_HM-anchored
-  Gaussian-core basin among the survivors, select the smallest objective inside
-  that basin, retain basin multiplicity and every start endpoint diagnostically,
+  `(0.1,0.9)` for PRD and `(0.1,0.99)` for P/PR; select the most populated
+  admissible basin (smallest q then lowest start index for equal multiplicity),
+  select the smallest objective inside that basin, retain basin multiplicity and
+  every start endpoint diagnostically,
   and validate MIGRAD/covariance/MINOS states and asymmetric physical errors;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`

@@ -893,11 +893,10 @@ MixedFitResult fit_mixed_model(
         );
     }
     const std::optional<std::size_t> selected_index =
-        select_mixed_start_by_half_maximum_basin(
+        select_mixed_start_by_largest_basin(
             endpoints,
             q_values,
             valid_indices,
-            half_maximum_seed,
             core_fraction_policy
         );
     if (!selected_index.has_value()) {

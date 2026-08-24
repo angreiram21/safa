@@ -222,42 +222,35 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
 );
 
 /**
- * @brief Select the mixed start from a non-degenerate basin anchored to R_HM.
+ * @brief Select the mixed start from the largest origin-admissible basin.
  * @param endpoints Final endpoint for every attempted deterministic start.
  * @param q_values Objective value associated with every attempted start.
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
- * @param half_maximum_radius R_HM obtained from the histogram FWHM and converted
- *        to the Gaussian model-radius convention for this observable family.
- * @param core_fraction_policy Origin-dependent admissibility rule for the basin
- *        representative mean f_core.
- * @return Start index with the smallest q inside the selected basin, or
- *         std::nullopt when every numerical basin is physically degenerate.
- * @throws std::invalid_argument If array sizes differ, R_HM is non-finite or
- *         non-positive, no valid start is supplied, or a valid q is non-finite.
+ * @param core_fraction_policy Origin-dependent f_core admissibility policy.
+ * @return Selected start index, or std::nullopt when every numerical basin is
+ *         physically degenerate.
+ * @throws std::invalid_argument If array sizes differ, no valid start is
+ *         supplied, or a valid q is non-finite.
  * @throws std::out_of_range If a valid start index is outside the input arrays.
  *
  * Valid endpoints are partitioned into connected numerical basins using
- * same_mixed_basin(). A basin is represented by the arithmetic mean of f_core
- * and by the arithmetic mean of log(R_core), equivalently the geometric-mean
- * R_core scale. Basins are eligible only when their representative fraction
- * satisfies the origin-specific physical core-fraction policy. PRD requires
- * 0.1 < mean(f_core) < 0.9, while P and PR require
- * 0.1 < mean(f_core) < 0.99 so that near-pure-Gaussian degeneracies are
- * rejected. Basins outside the applicable interval are classified as
- * degenerate and cannot participate in physical-basin selection.
+ * same_mixed_basin(). Basin admissibility is determined first from the
+ * arithmetic mean f_core. PRD retains the strict interval
+ * 0.1 < mean(f_core) < 0.9. P and PR use
+ * 0.1 < mean(f_core) < 0.99, rejecting the near-pure-Gaussian degeneracy.
  *
- * Among eligible basins, the Gaussian-core basin minimizes
- * |mean(log(R_core)) - log(R_HM)| = |log(R_core,geom / R_HM)|. No ordering
- * between R_core and R_tail is imposed and basin multiplicity is diagnostic
- * only. After the basin is fixed, q ranks only the minima inside that basin.
- * Exact distance ties are broken by the lower basin q and then the lowest
- * start index.
+ * Among admissible basins, every origin selects the basin reached by the
+ * largest number of converged deterministic starts. Equal-size basins are
+ * ranked by their smallest finite q, then by the lowest start index. q is
+ * never divided or otherwise normalized by basin multiplicity. Once the basin
+ * is fixed, the lowest-q start in that basin is selected. R_HM remains part of
+ * the deterministic seed set but does not rank final basins. No ordering
+ * between R_core and R_tail is imposed.
  */
-[[nodiscard]] std::optional<std::size_t> select_mixed_start_by_half_maximum_basin(
+[[nodiscard]] std::optional<std::size_t> select_mixed_start_by_largest_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
     const std::vector<std::size_t>& valid_indices,
-    double half_maximum_radius,
     MixedCoreFractionPolicy core_fraction_policy
 );
 
@@ -340,12 +333,13 @@ struct GaussianFitResult {
  * R_G always comes from the pure-Gaussian fit using the same estimator. Start
  * indices use core-major, then tail-major, then fraction-major ordering:
  * `index = (core_index * 3 + tail_index) * 3 + fraction_index`. Valid MIGRAD
- * endpoints are grouped into numerical basins. The selected basin is the one
- * whose geometric-mean R_core is closest to R_HM in logarithmic relative
- * scale, equivalently the basin minimizing
- * |mean(log(R_core)) - log(R_HM)|. The valid minimum with the smallest q
- * inside that basin is then selected for MINOS. `consensus_size` is retained
- * only as diagnostic basin multiplicity and never acts as an acceptance veto.
+ * endpoints are grouped into numerical basins. After the origin-specific
+ * strict f_core admissibility filter, the basin reached by the largest number
+ * of converged deterministic starts is selected. Equal-size basins are ranked
+ * by their smallest q and then by lowest start index. The valid minimum with
+ * the smallest q inside the selected basin is then selected for MINOS.
+ * `consensus_size` records the selected basin multiplicity and is not an
+ * independent acceptance veto. R_HM remains a deterministic seed only.
  */
 struct MixedFitResult {
     /** Number of deterministic Cartesian-product mixed MIGRAD starts. */
@@ -361,7 +355,7 @@ struct MixedFitResult {
     std::size_t starts_attempted;      ///< Number of starts actually run.
     std::size_t valid_starts;          ///< Starts with valid evaluable MIGRAD state.
     std::size_t consensus_size;        ///< Same-basin multiplicity of selected minimum.
-    /// Zero-based lowest-q start inside the R_HM-anchored numerical basin.
+    /// Zero-based lowest-q start inside the selected largest basin.
     std::optional<std::size_t> selected_core_start;
     MigradDiagnostic selected_migrad;  ///< Selected minimum MIGRAD diagnostic.
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
