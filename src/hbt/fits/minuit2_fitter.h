@@ -17,7 +17,7 @@
 namespace hbt {
 
 /**
- * @brief Fit one normalized pure-Gaussian estimator with MIGRAD and MINOS.
+ * @brief Fit one free-amplitude pure-Gaussian estimator with MIGRAD and MINOS.
  * @param family OSL or radial physical model family.
  * @param bins Slot-major raw uint64_t histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
@@ -32,10 +32,12 @@ namespace hbt {
  * The two deterministic starts are the moment-derived Gaussian radius and
  * @p half_maximum_seed. Both minimize the same estimator independently; the
  * valid minimum with the smallest q is selected. The free parameters are
- * log(R) and log(A_G), so both radius and Gaussian normalization remain
- * strictly positive without arbitrary physical bounds. A_G=1 reproduces the
- * former unit-normalized Gaussian; fitting A_G lets the Gaussian contribution
- * fall naturally below the total distribution outside the core.
+ * log(R) and log(A_G), so both radius and Gaussian amplitude remain strictly
+ * positive without arbitrary physical bounds. Expected counts are evaluated
+ * directly as N_selected*A_G times the exact Gaussian bin integral; the pure
+ * Gaussian is not normalized to unit probability over the fit region. The
+ * initial A_G at each radius start is the inverse full-region Gaussian
+ * integral, reproducing the former normalized shape only as an initial state.
  */
 [[nodiscard]] GaussianFitResult fit_gaussian_model(
     FitObservableFamily family,

@@ -20,6 +20,115 @@ constexpr double kSeriesScaledEdge = 0.25;
 /** Lower scaled edge above which complementary Gaussian tails are stable. */
 constexpr double kGaussianTailEdge = 4.0;
 
+/** Scaled edge above which asymptotic Gaussian survival logs are used. */
+constexpr long double kGaussianLogTailEdge = 8.0L;
+
+/**
+ * @brief Scaled OSL Gaussian survival with exp(+u^2) factored out.
+ * @param value Dimensionless u>0.
+ * @return exp(u^2) * integral_u^inf exp(-t^2) dt.
+ */
+long double scaled_osl_gaussian_survival(long double value) {
+    if (!(value > 0.0L) || !std::isfinite(value)) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid scaled Gaussian tail edge"
+        );
+    }
+    const long double inverse_two_u2 = 0.5L / (value * value);
+    long double term = 1.0L;
+    long double sum = 1.0L;
+    long double previous_abs = std::fabs(term);
+    for (std::size_t order = 1U; order < 256U; ++order) {
+        term *= -static_cast<long double>(2U * order - 1U) *
+            inverse_two_u2;
+        const long double current_abs = std::fabs(term);
+        if (current_abs > previous_abs) {
+            break;
+        }
+        const long double next = sum + term;
+        if (next == sum) {
+            break;
+        }
+        sum = next;
+        previous_abs = current_abs;
+    }
+    const long double scaled = 0.5L * sum / value;
+    if (!std::isfinite(scaled) || !(scaled > 0.0L)) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid scaled Gaussian survival"
+        );
+    }
+    return scaled;
+}
+
+/** @brief Natural log of integral_u^inf exp(-t^2) dt. */
+long double log_osl_gaussian_survival(long double value) {
+    if (!std::isfinite(value) || value < 0.0L) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid Gaussian survival edge"
+        );
+    }
+    if (value < kGaussianLogTailEdge) {
+        const long double pi = std::acos(-1.0L);
+        const long double survival = 0.5L * std::sqrt(pi) * std::erfc(value);
+        if (!std::isfinite(survival) || !(survival > 0.0L)) {
+            throw std::invalid_argument(
+                "HBT analysis model: invalid Gaussian survival"
+            );
+        }
+        return std::log(survival);
+    }
+    return -value * value +
+        std::log(scaled_osl_gaussian_survival(value));
+}
+
+/** @brief Natural log of integral_u^inf t^2 exp(-t^2) dt. */
+long double log_radial_gaussian_survival(long double value) {
+    if (!std::isfinite(value) || value < 0.0L) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid radial Gaussian survival edge"
+        );
+    }
+    if (value < kGaussianLogTailEdge) {
+        const long double pi = std::acos(-1.0L);
+        const long double survival =
+            0.25L * std::sqrt(pi) * std::erfc(value) +
+            0.5L * value * std::exp(-value * value);
+        if (!std::isfinite(survival) || !(survival > 0.0L)) {
+            throw std::invalid_argument(
+                "HBT analysis model: invalid radial Gaussian survival"
+            );
+        }
+        return std::log(survival);
+    }
+    const long double scaled =
+        0.5L * value +
+        0.5L * scaled_osl_gaussian_survival(value);
+    if (!std::isfinite(scaled) || !(scaled > 0.0L)) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid scaled radial Gaussian survival"
+        );
+    }
+    return -value * value + std::log(scaled);
+}
+
+/** @brief Stable log(exp(log_a)-exp(log_b)) for log_a>log_b. */
+long double log_positive_difference(long double log_a, long double log_b) {
+    if (!std::isfinite(log_a) || !std::isfinite(log_b) || !(log_a > log_b)) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid logarithmic positive difference"
+        );
+    }
+    const long double delta = log_b - log_a;
+    const long double correction = -std::expm1(delta);
+    if (!std::isfinite(correction) || !(correction > 0.0L)) {
+        throw std::invalid_argument(
+            "HBT analysis model: unresolved logarithmic bin integral"
+        );
+    }
+    return log_a + std::log(correction);
+}
+
 /**
  * @brief Require valid physical integration inputs.
  * @param lower Non-negative lower edge.
@@ -449,6 +558,100 @@ std::vector<double> component_probabilities(
 
 }  // namespace
 
+double gaussian_component_log_integral(
+    FitObservableFamily family,
+    double lower,
+    double upper,
+    double radius
+) {
+    require_integral_inputs(lower, upper, radius);
+    const long double radius_ld = static_cast<long double>(radius);
+    const long double lower_scaled =
+        static_cast<long double>(lower) / (2.0L * radius_ld);
+    const long double upper_scaled =
+        static_cast<long double>(upper) / (2.0L * radius_ld);
+
+    long double log_integral = 0.0L;
+    if (upper_scaled <= static_cast<long double>(kSeriesScaledEdge)) {
+        const double integral = gaussian_large_radius_series(
+            lower,
+            upper,
+            radius,
+            family == FitObservableFamily::OSL ? 0U : 2U
+        );
+        log_integral = std::log(static_cast<long double>(integral));
+    } else {
+        const long double log_lower_survival =
+            family == FitObservableFamily::OSL
+                ? log_osl_gaussian_survival(lower_scaled)
+                : log_radial_gaussian_survival(lower_scaled);
+        const long double log_upper_survival =
+            family == FitObservableFamily::OSL
+                ? log_osl_gaussian_survival(upper_scaled)
+                : log_radial_gaussian_survival(upper_scaled);
+        const long double log_dimensionless = log_positive_difference(
+            log_lower_survival, log_upper_survival
+        );
+        if (family == FitObservableFamily::OSL) {
+            log_integral = std::log(2.0L * radius_ld) + log_dimensionless;
+        } else {
+            log_integral = std::log(8.0L * radius_ld * radius_ld * radius_ld) +
+                log_dimensionless;
+        }
+    }
+
+    const double result = static_cast<double>(log_integral);
+    if (!std::isfinite(result)) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid logarithmic Gaussian integral"
+        );
+    }
+    return result;
+}
+
+std::vector<double> gaussian_bin_log_expected_counts(
+    FitObservableFamily family,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& region,
+    double radius,
+    double amplitude
+) {
+    require_region(binning, region);
+    if (!std::isfinite(radius) || radius <= 0.0 ||
+        !std::isfinite(amplitude) || amplitude <= 0.0) {
+        throw std::invalid_argument(
+            "HBT Gaussian fit: invalid radius or amplitude"
+        );
+    }
+    const double log_scale =
+        std::log(static_cast<double>(region.selected_count)) +
+        std::log(amplitude);
+    if (!std::isfinite(log_scale)) {
+        throw std::invalid_argument(
+            "HBT Gaussian fit: invalid expected-count scale"
+        );
+    }
+
+    std::vector<double> log_expected;
+    log_expected.reserve(region.last_bin - region.first_bin + 1U);
+    for (std::size_t bin = region.first_bin; bin <= region.last_bin; ++bin) {
+        const double log_integral = gaussian_component_log_integral(
+            family,
+            histogram_bin_lower_edge(binning, bin),
+            histogram_bin_upper_edge(binning, bin),
+            radius
+        );
+        const double value = log_scale + log_integral;
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "HBT Gaussian fit: invalid logarithmic expected count"
+            );
+        }
+        log_expected.push_back(value);
+    }
+    return log_expected;
+}
+
 double gaussian_component_integral(
     FitObservableFamily family,
     double lower,
@@ -876,6 +1079,185 @@ double binned_pearson_chi_square(
         );
     }
     return chi_square;
+}
+
+namespace {
+
+/** @brief Validate raw-count bookkeeping for logarithmic expected counts. */
+std::size_t validate_log_expected_inputs(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& log_expected
+) {
+    const std::size_t selected_bins =
+        region.last_bin - region.first_bin + 1U;
+    if (log_expected.size() != selected_bins) {
+        throw std::invalid_argument(
+            "HBT analysis objective: log-expected cardinality mismatch"
+        );
+    }
+    if (offset > bins.size() ||
+        region.first_bin > region.last_bin ||
+        region.first_bin > bins.size() - offset ||
+        selected_bins > bins.size() - offset - region.first_bin) {
+        throw std::out_of_range(
+            "HBT analysis objective: selected raw histogram range is unavailable"
+        );
+    }
+    if (region.selected_count == 0U) {
+        throw std::invalid_argument(
+            "HBT analysis objective: selected count is zero"
+        );
+    }
+
+    std::uint64_t raw_sum = 0U;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        if (raw > std::numeric_limits<std::uint64_t>::max() - raw_sum) {
+            throw std::overflow_error(
+                "HBT analysis objective: selected raw count overflow"
+            );
+        }
+        raw_sum += raw;
+        if (!std::isfinite(log_expected[index])) {
+            throw std::invalid_argument(
+                "HBT analysis objective: invalid logarithmic expected count"
+            );
+        }
+    }
+    if (raw_sum != region.selected_count) {
+        throw std::invalid_argument(
+            "HBT analysis objective: selected count differs from raw counts"
+        );
+    }
+    return selected_bins;
+}
+
+/** @brief Exponentiate one finite log count using long-double dynamic range. */
+long double expected_from_log(double log_expected) {
+    const long double log_value = static_cast<long double>(log_expected);
+    const long double log_max = std::log(
+        std::numeric_limits<long double>::max()
+    );
+    if (log_value > log_max) {
+        return std::numeric_limits<long double>::infinity();
+    }
+    return std::exp(log_value);
+}
+
+/** @brief Convert a non-negative long-double objective to Minuit double. */
+double finite_objective_value(long double value) {
+    if (!std::isfinite(value) || value < 0.0L ||
+        value >= static_cast<long double>(
+            std::numeric_limits<double>::max()
+        )) {
+        return std::numeric_limits<double>::max();
+    }
+    return static_cast<double>(value);
+}
+
+}  // namespace
+
+double binned_poisson_deviance_from_log_expected(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& log_expected
+) {
+    const std::size_t selected_bins = validate_log_expected_inputs(
+        bins, offset, region, log_expected
+    );
+    long double deviance = 0.0L;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        const long double expected = expected_from_log(log_expected[index]);
+        if (!std::isfinite(expected)) {
+            return std::numeric_limits<double>::max();
+        }
+        if (raw == 0U) {
+            deviance += 2.0L * expected;
+        } else {
+            const long double observed = static_cast<long double>(raw);
+            deviance += 2.0L * (
+                expected - observed + observed * (
+                    std::log(observed) -
+                    static_cast<long double>(log_expected[index])
+                )
+            );
+        }
+        if (!std::isfinite(deviance)) {
+            return std::numeric_limits<double>::max();
+        }
+    }
+    if (deviance < 0.0L &&
+        std::fabs(deviance) <=
+            64.0L * std::numeric_limits<long double>::epsilon()) {
+        deviance = 0.0L;
+    }
+    return finite_objective_value(deviance);
+}
+
+double binned_neyman_chi_square_from_log_expected(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& log_expected
+) {
+    const std::size_t selected_bins = validate_log_expected_inputs(
+        bins, offset, region, log_expected
+    );
+    long double chi_square = 0.0L;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        if (raw == 0U) {
+            continue;
+        }
+        const long double expected = expected_from_log(log_expected[index]);
+        if (!std::isfinite(expected)) {
+            return std::numeric_limits<double>::max();
+        }
+        const long double observed = static_cast<long double>(raw);
+        const long double residual = observed - expected;
+        chi_square += residual * residual / observed;
+        if (!std::isfinite(chi_square)) {
+            return std::numeric_limits<double>::max();
+        }
+    }
+    return finite_objective_value(chi_square);
+}
+
+double binned_pearson_chi_square_from_log_expected(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& log_expected
+) {
+    const std::size_t selected_bins = validate_log_expected_inputs(
+        bins, offset, region, log_expected
+    );
+    long double chi_square = 0.0L;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const long double expected = expected_from_log(log_expected[index]);
+        if (!std::isfinite(expected)) {
+            return std::numeric_limits<double>::max();
+        }
+        const long double observed = static_cast<long double>(
+            bins[offset + region.first_bin + index]
+        );
+        if (expected == 0.0L) {
+            if (observed == 0.0L) {
+                continue;
+            }
+            return std::numeric_limits<double>::max();
+        }
+        const long double residual = observed - expected;
+        chi_square += residual * residual / expected;
+        if (!std::isfinite(chi_square)) {
+            return std::numeric_limits<double>::max();
+        }
+    }
+    return finite_objective_value(chi_square);
 }
 
 std::vector<double> probabilities_to_pdf(

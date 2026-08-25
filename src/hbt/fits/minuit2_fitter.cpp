@@ -196,15 +196,12 @@ double gaussian_region_integral(
     const StatisticalRegion& region,
     double radius
 ) {
-    double integral = 0.0;
-    for (std::size_t bin = region.first_bin; bin <= region.last_bin; ++bin) {
-        integral += gaussian_component_integral(
-            family,
-            histogram_bin_lower_edge(binning, bin),
-            histogram_bin_upper_edge(binning, bin),
-            radius
-        );
-    }
+    const double integral = gaussian_component_integral(
+        family,
+        histogram_bin_lower_edge(binning, region.first_bin),
+        histogram_bin_upper_edge(binning, region.last_bin),
+        radius
+    );
     if (!std::isfinite(integral) || integral <= 0.0) {
         throw std::invalid_argument(
             "HBT Gaussian fit: invalid integrated Gaussian normalization"
@@ -259,28 +256,26 @@ public:
         const double radius = std::exp(parameters[0]);
         const double amplitude = std::exp(parameters[1]);
         try {
-            const std::vector<double> probabilities =
-                gaussian_bin_probabilities(
+            const std::vector<double> log_expected =
+                gaussian_bin_log_expected_counts(
                     family_,
                     binning_,
                     region_,
-                    radius
+                    radius,
+                    amplitude
                 );
-            const double normalization = amplitude * gaussian_region_integral(
-                family_, binning_, region_, radius
-            );
             switch (estimator_) {
                 case FitEstimator::Poisson:
-                    return binned_poisson_deviance(
-                        bins_, offset_, region_, probabilities, normalization
+                    return binned_poisson_deviance_from_log_expected(
+                        bins_, offset_, region_, log_expected
                     );
                 case FitEstimator::Neyman:
-                    return binned_neyman_chi_square(
-                        bins_, offset_, region_, probabilities, normalization
+                    return binned_neyman_chi_square_from_log_expected(
+                        bins_, offset_, region_, log_expected
                     );
                 case FitEstimator::Pearson:
-                    return binned_pearson_chi_square(
-                        bins_, offset_, region_, probabilities, normalization
+                    return binned_pearson_chi_square_from_log_expected(
+                        bins_, offset_, region_, log_expected
                     );
             }
         } catch (const std::exception&) {
@@ -778,19 +773,6 @@ GaussianFitResult fit_gaussian_model(
         return result;
     }
 
-    std::vector<double> probabilities;
-    try {
-        probabilities = gaussian_bin_probabilities(
-            family,
-            binning,
-            region,
-            radius
-        );
-    } catch (const std::exception&) {
-        result.failure_reason = FitFailureReason::ObjectiveEvaluation;
-        return result;
-    }
-
     GaussianObjective selected_objective(
         family, bins, offset, binning, region, estimator
     );
@@ -821,12 +803,35 @@ GaussianFitResult fit_gaussian_model(
         result.amplitude = physical_radius_estimate(
             log_amplitude, amplitude_error
         );
-        result.fitted_pdf = probabilities_to_pdf(probabilities, binning);
-        const double fitted_normalization = amplitude * gaussian_region_integral(
-            family, binning, region, radius
+        const double bin_width = 1.0 / binning.inverse_bin_width;
+        const double log_density_scale = std::log(amplitude) -
+            std::log(bin_width);
+        result.fitted_pdf.clear();
+        result.fitted_pdf.reserve(
+            region.last_bin - region.first_bin + 1U
         );
-        for (double& value : result.fitted_pdf) {
-            value *= fitted_normalization;
+        const double log_min_double = std::log(
+            std::numeric_limits<double>::denorm_min()
+        );
+        const double log_max_double = std::log(
+            std::numeric_limits<double>::max()
+        );
+        for (std::size_t bin = region.first_bin; bin <= region.last_bin; ++bin) {
+            const double log_density = log_density_scale +
+                gaussian_component_log_integral(
+                    family,
+                    histogram_bin_lower_edge(binning, bin),
+                    histogram_bin_upper_edge(binning, bin),
+                    radius
+                );
+            if (!std::isfinite(log_density) || log_density > log_max_double) {
+                throw std::invalid_argument(
+                    "HBT Gaussian fit: invalid fitted density"
+                );
+            }
+            result.fitted_pdf.push_back(
+                log_density < log_min_double ? 0.0 : std::exp(log_density)
+            );
         }
     } catch (const std::exception&) {
         result.radius = std::nullopt;

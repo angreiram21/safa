@@ -33,6 +33,49 @@ namespace hbt {
 );
 
 /**
+ * @brief Return the natural logarithm of one exact Gaussian bin integral.
+ * @param family OSL or radial physical model family.
+ * @param lower Non-negative inclusive lower edge.
+ * @param upper Finite upper edge strictly greater than lower.
+ * @param radius Strictly positive finite Gaussian radius R.
+ * @return log of the strictly positive exact Gaussian component integral.
+ * @throws std::invalid_argument If inputs are invalid or the logarithmic
+ *         integral cannot be represented.
+ *
+ * The logarithmic form remains finite for far-tail bins whose physical
+ * integral is positive but below the representable double range.
+ */
+[[nodiscard]] double gaussian_component_log_integral(
+    FitObservableFamily family,
+    double lower,
+    double upper,
+    double radius
+);
+
+/**
+ * @brief Return log expected counts for a free-amplitude pure Gaussian.
+ * @param family OSL or radial physical model family.
+ * @param binning Validated histogram binning.
+ * @param region Selected contiguous statistical region.
+ * @param radius Strictly positive Gaussian radius.
+ * @param amplitude Strictly positive Gaussian amplitude A_G.
+ * @return log(mu_i) for every selected bin, with
+ *         mu_i=N_selected*A_G*Integral_i[G].
+ * @throws std::invalid_argument For invalid physical parameters or model state.
+ * @throws std::out_of_range If the selected region exceeds the binning.
+ *
+ * No unit-sum probability normalization is performed. This is the native
+ * model representation used by the free-amplitude pure-Gaussian objective.
+ */
+[[nodiscard]] std::vector<double> gaussian_bin_log_expected_counts(
+    FitObservableFamily family,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& region,
+    double radius,
+    double amplitude
+);
+
+/**
  * @brief Integrate the unnormalized exponential component over exact edges.
  * @param family OSL or radial physical model family.
  * @param lower Non-negative inclusive lower edge.
@@ -167,6 +210,40 @@ namespace hbt {
     const StatisticalRegion& region,
     const std::vector<double>& probabilities,
     double normalization = 1.0
+);
+
+/**
+ * @brief Evaluate Poisson deviance from logarithmic expected counts.
+ * @param bins Raw histogram counts.
+ * @param offset First raw counter for the logical histogram.
+ * @param region Selected contiguous statistical region.
+ * @param log_expected Natural logarithm of the model expected count per bin.
+ * @return Finite Poisson deviance when representable.
+ *
+ * This path is intended for non-normalized models whose far-tail expectations
+ * can be smaller than the representable double range.
+ */
+[[nodiscard]] double binned_poisson_deviance_from_log_expected(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& log_expected
+);
+
+/** @brief Evaluate Neyman chi-square from logarithmic expected counts. */
+[[nodiscard]] double binned_neyman_chi_square_from_log_expected(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& log_expected
+);
+
+/** @brief Evaluate Pearson chi-square from logarithmic expected counts. */
+[[nodiscard]] double binned_pearson_chi_square_from_log_expected(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& log_expected
 );
 
 /**

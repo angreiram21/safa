@@ -404,6 +404,119 @@ bool verify_free_normalization_multiplier() {
 }
 
 /**
+ * @brief Verify log-expected objectives reproduce ordinary finite objectives.
+ * @return true when only the numerical representation changes.
+ */
+bool verify_log_expected_objective_consistency() {
+    const std::vector<std::uint64_t> bins{2U, 4U};
+    const hbt::StatisticalRegion region{0U, 1U, 6U};
+    const std::vector<double> probabilities{1.0 / 3.0, 2.0 / 3.0};
+    constexpr double normalization = 0.5;
+    const std::vector<double> log_expected{
+        std::log(6.0 * normalization * probabilities[0U]),
+        std::log(6.0 * normalization * probabilities[1U])
+    };
+
+    const double poisson = hbt::binned_poisson_deviance(
+        bins, 0U, region, probabilities, normalization
+    );
+    const double neyman = hbt::binned_neyman_chi_square(
+        bins, 0U, region, probabilities, normalization
+    );
+    const double pearson = hbt::binned_pearson_chi_square(
+        bins, 0U, region, probabilities, normalization
+    );
+    if (!close(
+            hbt::binned_poisson_deviance_from_log_expected(
+                bins, 0U, region, log_expected
+            ),
+            poisson
+        ) ||
+        !close(
+            hbt::binned_neyman_chi_square_from_log_expected(
+                bins, 0U, region, log_expected
+            ),
+            neyman
+        ) ||
+        !close(
+            hbt::binned_pearson_chi_square_from_log_expected(
+                bins, 0U, region, log_expected
+            ),
+            pearson
+        )) {
+        return fail("log-expected objectives changed finite objective values");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify logarithmic Gaussian integrals remain finite in extreme tails.
+ * @return true when direct free-amplitude objectives avoid double underflow.
+ */
+bool verify_log_gaussian_tail_objective() {
+    const hbt::HistogramBinningConfig binning{3U, 0.0, 300.0, 0.01};
+    const hbt::StatisticalRegion region{0U, 2U, 111U};
+    const std::vector<std::uint64_t> bins{100U, 10U, 1U};
+
+    for (const hbt::FitObservableFamily family : {
+             hbt::FitObservableFamily::OSL,
+             hbt::FitObservableFamily::Radial
+         }) {
+        const double log_tail = hbt::gaussian_component_log_integral(
+            family, 200.0, 300.0, 2.0
+        );
+        if (!std::isfinite(log_tail) || !(log_tail < -1000.0)) {
+            return fail("far-tail Gaussian log integral is not stable");
+        }
+        const std::vector<double> log_expected =
+            hbt::gaussian_bin_log_expected_counts(
+                family, binning, region, 2.0, 1.0
+            );
+        if (log_expected.size() != 3U ||
+            !std::isfinite(log_expected[2U])) {
+            return fail("far-tail Gaussian expected counts are not logarithmic");
+        }
+        const double poisson =
+            hbt::binned_poisson_deviance_from_log_expected(
+                bins, 0U, region, log_expected
+            );
+        const double neyman =
+            hbt::binned_neyman_chi_square_from_log_expected(
+                bins, 0U, region, log_expected
+            );
+        if (!std::isfinite(poisson) ||
+            poisson == std::numeric_limits<double>::max() ||
+            !std::isfinite(neyman) ||
+            neyman == std::numeric_limits<double>::max()) {
+            return fail("free-amplitude Gaussian objective failed in far tail");
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Verify logarithmic and ordinary Gaussian integrals agree in range.
+ * @return true when the log representation preserves the exact-bin model.
+ */
+bool verify_log_gaussian_integral_consistency() {
+    for (const hbt::FitObservableFamily family : {
+             hbt::FitObservableFamily::OSL,
+             hbt::FitObservableFamily::Radial
+         }) {
+        const double integral = hbt::gaussian_component_integral(
+            family, 1.2, 1.5, 2.3
+        );
+        const double log_integral = hbt::gaussian_component_log_integral(
+            family, 1.2, 1.5, 2.3
+        );
+        if (!close(std::exp(log_integral), integral)) {
+            return fail("log Gaussian integral changed the exact-bin model");
+        }
+    }
+    return true;
+}
+
+/**
  * @brief Verify presentation curves reuse integrated bin probabilities.
  * @return true when density is probability divided only by exact bin width.
  */
@@ -437,6 +550,9 @@ int main() {
         !verify_raw_count_anchor() ||
         !verify_likelihood_probability_normalization() ||
         !verify_free_normalization_multiplier() ||
+        !verify_log_expected_objective_consistency() ||
+        !verify_log_gaussian_tail_objective() ||
+        !verify_log_gaussian_integral_consistency() ||
         !verify_integrated_curve_density()) {
         return EXIT_FAILURE;
     }
