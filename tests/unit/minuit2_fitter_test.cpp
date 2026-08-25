@@ -98,13 +98,18 @@ bool verify_gaussian_migrad_and_minos() {
         !fit.fully_valid || !fit.migrad.attempted ||
         !fit.migrad.valid || !fit.minos_radius.attempted ||
         !fit.minos_radius.lower_valid ||
-        !fit.minos_radius.upper_valid || !fit.radius.has_value() ||
-        !fit.q_min.has_value() || fit.fitted_pdf.size() != 20U) {
+        !fit.minos_radius.upper_valid || !fit.minos_amplitude.attempted ||
+        !fit.minos_amplitude.lower_valid ||
+        !fit.minos_amplitude.upper_valid || !fit.radius.has_value() ||
+        !fit.amplitude.has_value() || !fit.q_min.has_value() ||
+        fit.fitted_pdf.size() != 20U) {
         return fail("exact Gaussian sample did not pass MIGRAD and MINOS");
     }
     if (fit.radius->value <= 0.0 || fit.radius->lower_error < 0.0 ||
-        fit.radius->upper_error < 0.0) {
-        return fail("Gaussian physical radius interval is invalid");
+        fit.radius->upper_error < 0.0 || fit.amplitude->value <= 0.0 ||
+        fit.amplitude->lower_error < 0.0 ||
+        fit.amplitude->upper_error < 0.0) {
+        return fail("Gaussian physical radius/amplitude interval is invalid");
     }
     return true;
 }
@@ -418,7 +423,8 @@ bool verify_insufficient_bins_are_reported() {
     );
     if (gaussian.fully_valid ||
         gaussian.failure_reason != hbt::FitFailureReason::InsufficientBins ||
-        gaussian.migrad.attempted || gaussian.minos_radius.attempted) {
+        gaussian.migrad.attempted || gaussian.minos_radius.attempted ||
+        gaussian.minos_amplitude.attempted) {
         return fail("Gaussian K < P+1 was not explicitly rejected");
     }
 

@@ -537,7 +537,7 @@ void write_empty_mixed_fields(std::ostream& output) {
  * @param slice_index Global or flat-slice identity.
  * @param location Observable presentation identity.
  * @param result Completed independent Gaussian fit result.
- * @param fit_region Compact statistical region actually fitted by the Gaussian.
+ * @param fit_region Full contiguous region actually fitted by the Gaussian.
  * @param binning Owning uniform histogram binning used for physical edges.
  */
 void write_gaussian_row(
@@ -548,7 +548,10 @@ void write_gaussian_row(
     const ObservableLocation& location,
     const hbt::GaussianFitResult& result,
     const std::optional<hbt::StatisticalRegion>& fit_region,
-    const hbt::HistogramBinningConfig& binning
+    const hbt::HistogramBinningConfig& binning,
+    const char* parameter,
+    const std::optional<hbt::FitParameterEstimate>& estimate,
+    const hbt::MinosDiagnostic& minos
 ) {
     write_identity_fields(
         output,
@@ -558,22 +561,22 @@ void write_gaussian_row(
         location
     );
     output << ",gaussian," << hbt::fit_estimator_token(result.estimator)
-           << ",R_G_core,";
+           << ',' << parameter << ',';
     write_bool(output, result.fully_valid);
     output << ',' << hbt::fit_failure_reason_token(result.failure_reason)
            << ',';
     write_optional_double(output, result.q_min);
     output << ',';
-    if (result.fully_valid && result.radius.has_value()) {
-        output << result.radius->value << ','
-               << result.radius->lower_error << ','
-               << result.radius->upper_error;
+    if (estimate.has_value()) {
+        output << estimate->value << ','
+               << estimate->lower_error << ','
+               << estimate->upper_error;
     } else {
         output << ",,";
     }
     write_fit_region_fields(output, fit_region, binning);
     write_migrad_fields(output, result.migrad);
-    write_minos_fields(output, result.minos_radius);
+    write_minos_fields(output, minos);
     write_empty_mixed_fields(output);
     output << '\n';
 }
@@ -786,15 +789,18 @@ void write_shape_result(
         &result.gaussian_pearson
     }};
     for (const hbt::GaussianFitResult* gaussian_ptr : gaussian_outputs) {
+        const hbt::GaussianFitResult& gaussian = *gaussian_ptr;
         write_gaussian_row(
-            parameters,
-            product_index,
-            origin,
-            slice_index,
-            location,
-            *gaussian_ptr,
-            result.gaussian_core_region,
-            binning
+            parameters, product_index, origin, slice_index, location, gaussian,
+            result.gaussian_core_region, binning, "R_G_core",
+            gaussian.fully_valid ? gaussian.radius : std::nullopt,
+            gaussian.minos_radius
+        );
+        write_gaussian_row(
+            parameters, product_index, origin, slice_index, location, gaussian,
+            result.gaussian_core_region, binning, "A_G",
+            gaussian.fully_valid ? gaussian.amplitude : std::nullopt,
+            gaussian.minos_amplitude
         );
     }
     const std::array<const hbt::MixedFitResult*, 3U> mixed_outputs{{

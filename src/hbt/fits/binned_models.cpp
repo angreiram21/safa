@@ -632,8 +632,14 @@ double binned_poisson_deviance(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const StatisticalRegion& region,
-    const std::vector<double>& probabilities
+    const std::vector<double>& probabilities,
+    double normalization
 ) {
+    if (!std::isfinite(normalization) || normalization <= 0.0) {
+        throw std::invalid_argument(
+            "HBT analysis objective: invalid model normalization"
+        );
+    }
     const std::size_t selected_bins =
         region.last_bin - region.first_bin + 1U;
     if (probabilities.size() != selected_bins) {
@@ -693,7 +699,7 @@ double binned_poisson_deviance(
     double deviance = 0.0;
     for (std::size_t index = 0U; index < selected_bins; ++index) {
         const double expected = static_cast<double>(region.selected_count) *
-            probabilities[index];
+            normalization * probabilities[index];
         if (!std::isfinite(expected) || expected <= 0.0) {
             throw std::invalid_argument(
                 "HBT analysis objective: invalid expected count"
@@ -798,8 +804,14 @@ double binned_neyman_chi_square(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const StatisticalRegion& region,
-    const std::vector<double>& probabilities
+    const std::vector<double>& probabilities,
+    double normalization
 ) {
+    if (!std::isfinite(normalization) || normalization <= 0.0) {
+        throw std::invalid_argument(
+            "HBT analysis Neyman chi-square: invalid model normalization"
+        );
+    }
     const std::size_t selected_bins = validate_chi_square_inputs(
         bins, offset, region, probabilities
     );
@@ -811,7 +823,7 @@ double binned_neyman_chi_square(
         }
         const double observed = static_cast<double>(raw);
         const double expected = static_cast<double>(region.selected_count) *
-            probabilities[index];
+            normalization * probabilities[index];
         if (!std::isfinite(expected) || expected <= 0.0) {
             throw std::invalid_argument(
                 "HBT analysis Neyman chi-square: invalid expected count"
@@ -832,8 +844,14 @@ double binned_pearson_chi_square(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const StatisticalRegion& region,
-    const std::vector<double>& probabilities
+    const std::vector<double>& probabilities,
+    double normalization
 ) {
+    if (!std::isfinite(normalization) || normalization <= 0.0) {
+        throw std::invalid_argument(
+            "HBT analysis Pearson chi-square: invalid model normalization"
+        );
+    }
     const std::size_t selected_bins = validate_chi_square_inputs(
         bins, offset, region, probabilities
     );
@@ -843,7 +861,7 @@ double binned_pearson_chi_square(
             bins[offset + region.first_bin + index]
         );
         const double expected = static_cast<double>(region.selected_count) *
-            probabilities[index];
+            normalization * probabilities[index];
         if (!std::isfinite(expected) || expected <= 0.0) {
             throw std::invalid_argument(
                 "HBT analysis Pearson chi-square: invalid expected count"

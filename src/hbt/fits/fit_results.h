@@ -291,13 +291,14 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
 );
 
 /**
- * @brief Result of one independent one-parameter pure-Gaussian fit.
+ * @brief Result of one independent two-parameter pure-Gaussian fit.
  *
  * Two deterministic radius starts are attempted when available: the moment
  * seed and the half-maximum-width seed converted to the model radius. The
  * numerically valid MIGRAD solution with the smallest estimator objective is
- * selected for MINOS. The Gaussian fit region remains the independently
- * validated 10% core region.
+ * selected for MINOS. The Gaussian is fitted over the full contiguous shape
+ * region. The pure Gaussian has a free positive
+ * amplitude and therefore is not forced to carry unit area over that region.
  */
 struct GaussianFitResult {
     /** Number of deterministic Gaussian MIGRAD starts. */
@@ -314,9 +315,12 @@ struct GaussianFitResult {
     std::optional<std::size_t> selected_start;
     MigradDiagnostic migrad;           ///< Selected minimum MIGRAD diagnostic.
     MinosDiagnostic minos_radius;      ///< MINOS diagnostic for log(R).
+    MinosDiagnostic minos_amplitude;   ///< MINOS diagnostic for log(A_G).
     std::optional<double> q_min;        ///< Smallest valid objective found.
     /// Physical R and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> radius;
+    /// Positive Gaussian amplitude A_G and asymmetric MINOS errors.
+    std::optional<FitParameterEstimate> amplitude;
     /// Valid fitted bin densities; empty when the fit is not fully valid.
     std::vector<double> fitted_pdf;
 };
@@ -378,16 +382,17 @@ struct MixedFitResult {
 struct ShapeHistogramResult {
     /// Full contiguous region retained for normalization and the mixed model.
     std::optional<StatisticalRegion> region;
-    /// Compact region used only by the pure Gaussian core fit.
+    /// Full region used by the free-amplitude pure Gaussian fit.
+    /// Retained under the historical field name for output compatibility.
     std::optional<StatisticalRegion> gaussian_core_region;
     std::uint64_t selected_count;            ///< N over the full region.
     /// Final normalized distribution over the full statistical region.
     std::vector<NormalizedHistogramBin> normalized_bins;
-    /// Truncated pure Gaussian fit using the default Poisson estimator.
+    /// Full-range free-amplitude pure Gaussian using Poisson deviance.
     GaussianFitResult gaussian;
-    /// Independent truncated pure Gaussian fit using Neyman chi-square.
+    /// Independent full-range free-amplitude Gaussian using Neyman chi-square.
     GaussianFitResult gaussian_neyman;
-    /// Independent truncated pure Gaussian fit using Pearson chi-square.
+    /// Independent full-range free-amplitude Gaussian using Pearson chi-square.
     GaussianFitResult gaussian_pearson;
     /// Full-range mixed fit using the default binned Poisson deviance.
     MixedFitResult mixed;

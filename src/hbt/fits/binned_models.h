@@ -98,7 +98,9 @@ namespace hbt {
  * @param bins Slot-major raw histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param region Selected contiguous statistical region.
- * @param probabilities Model probabilities aligned with selected bins.
+ * @param probabilities Unit-normalized model probabilities for selected bins.
+ * @param normalization Positive fitted normalization multiplier. The historical
+ *        fixed-normalization behavior is recovered exactly at 1.0.
  * @return D = -2 log L up to shape-independent constants.
  * @throws std::invalid_argument If probabilities are non-positive, non-finite,
  *         not unit-normalized within double roundoff, cardinality differs, or
@@ -114,7 +116,8 @@ namespace hbt {
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const StatisticalRegion& region,
-    const std::vector<double>& probabilities
+    const std::vector<double>& probabilities,
+    double normalization = 1.0
 );
 
 /**
@@ -123,21 +126,23 @@ namespace hbt {
  * @param offset First raw counter belonging to the logical histogram.
  * @param region Selected contiguous statistical region.
  * @param probabilities Unit-normalized model probabilities for selected bins.
+ * @param normalization Positive fitted normalization multiplier.
  * @return chi2_N = sum_{n_i>0} (n_i-mu_i)^2 / n_i.
  * @throws std::invalid_argument If model probabilities or selected-count
  *         bookkeeping are invalid.
  * @throws std::out_of_range If the selected raw range is unavailable.
  *
- * Expected counts are mu_i = N_fit p_i with N_fit equal to the exact selected
- * raw count. Bins with n_i == 0 are omitted, matching the historical SAFA
- * Neyman weighting. The model remains normalized over the complete selected
- * region; no free amplitude is introduced.
+ * Expected counts are mu_i = N_fit * normalization * p_i with N_fit equal to
+ * the exact selected raw count. Bins with n_i == 0 are omitted, matching the
+ * historical SAFA Neyman weighting. Mixed fits use normalization=1; the pure
+ * Gaussian may supply a fitted positive normalization.
  */
 [[nodiscard]] double binned_neyman_chi_square(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const StatisticalRegion& region,
-    const std::vector<double>& probabilities
+    const std::vector<double>& probabilities,
+    double normalization = 1.0
 );
 
 /**
@@ -146,20 +151,22 @@ namespace hbt {
  * @param offset First raw counter belonging to the logical histogram.
  * @param region Selected contiguous statistical region.
  * @param probabilities Unit-normalized model probabilities for selected bins.
+ * @param normalization Positive fitted normalization multiplier.
  * @return chi2_P = sum_i (n_i-mu_i)^2 / mu_i.
  * @throws std::invalid_argument If model probabilities or selected-count
  *         bookkeeping are invalid.
  * @throws std::out_of_range If the selected raw range is unavailable.
  *
  * Zero-count observed bins remain in Pearson chi-square because mu_i is the
- * denominator. The normalization and expected-count convention are identical
- * to the Poisson and Neyman estimators.
+ * denominator. Expected counts use the same positive normalization multiplier
+ * convention as Poisson and Neyman.
  */
 [[nodiscard]] double binned_pearson_chi_square(
     const std::vector<std::uint64_t>& bins,
     std::size_t offset,
     const StatisticalRegion& region,
-    const std::vector<double>& probabilities
+    const std::vector<double>& probabilities,
+    double normalization = 1.0
 );
 
 /**

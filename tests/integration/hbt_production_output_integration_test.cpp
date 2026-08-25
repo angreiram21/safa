@@ -388,6 +388,7 @@ bool verify_analysis_and_output() {
     if (valid_parameters.find("minos_lower_valid") == std::string::npos ||
         valid_parameters.find("fit_upper_edge") == std::string::npos ||
         valid_parameters.find("R_G_core") == std::string::npos ||
+        valid_parameters.find("A_G") == std::string::npos ||
         valid_parameters.find("estimator") == std::string::npos ||
         valid_parameters.find("poisson") == std::string::npos ||
         valid_parameters.find("neyman") == std::string::npos ||

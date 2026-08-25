@@ -375,6 +375,34 @@ bool verify_likelihood_probability_normalization() {
     return fail("likelihood accepted probabilities whose sum differs from one");
 }
 
+
+/**
+ * @brief Verify the optional model normalization rescales expected counts.
+ * @return true when free-amplitude objective scaling is applied exactly.
+ */
+bool verify_free_normalization_multiplier() {
+    const std::vector<std::uint64_t> bins{2U, 4U};
+    const hbt::StatisticalRegion region{0U, 1U, 6U};
+    const std::vector<double> probabilities{1.0 / 3.0, 2.0 / 3.0};
+    const double neyman = hbt::binned_neyman_chi_square(
+        bins, 0U, region, probabilities, 0.5
+    );
+    const double pearson = hbt::binned_pearson_chi_square(
+        bins, 0U, region, probabilities, 0.5
+    );
+    if (!close(neyman, 1.5) || !close(pearson, 3.0)) {
+        return fail("free normalization did not rescale expected counts");
+    }
+    try {
+        (void)hbt::binned_poisson_deviance(
+            bins, 0U, region, probabilities, 0.0
+        );
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return fail("non-positive free normalization was accepted");
+}
+
 /**
  * @brief Verify presentation curves reuse integrated bin probabilities.
  * @return true when density is probability divided only by exact bin width.
@@ -408,6 +436,7 @@ int main() {
         !verify_pearson_chi_square_terms() ||
         !verify_raw_count_anchor() ||
         !verify_likelihood_probability_normalization() ||
+        !verify_free_normalization_multiplier() ||
         !verify_integrated_curve_density()) {
         return EXIT_FAILURE;
     }

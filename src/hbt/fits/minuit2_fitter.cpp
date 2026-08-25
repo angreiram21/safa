@@ -79,6 +79,8 @@ GaussianFitResult invalid_gaussian(
         std::nullopt,
         empty,
         unattempted_minos(),
+        unattempted_minos(),
+        std::nullopt,
         std::nullopt,
         std::nullopt,
         {}
@@ -186,7 +188,33 @@ std::optional<RadiusSeeds> derive_radius_seeds(
 }
 
 /**
- * @brief Minuit2 objective for a one-radius normalized Gaussian model.
+ * @brief Exact integral of the unnormalized Gaussian over one fit region.
+ */
+double gaussian_region_integral(
+    FitObservableFamily family,
+    const HistogramBinningConfig& binning,
+    const StatisticalRegion& region,
+    double radius
+) {
+    double integral = 0.0;
+    for (std::size_t bin = region.first_bin; bin <= region.last_bin; ++bin) {
+        integral += gaussian_component_integral(
+            family,
+            histogram_bin_lower_edge(binning, bin),
+            histogram_bin_upper_edge(binning, bin),
+            radius
+        );
+    }
+    if (!std::isfinite(integral) || integral <= 0.0) {
+        throw std::invalid_argument(
+            "HBT Gaussian fit: invalid integrated Gaussian normalization"
+        );
+    }
+    return integral;
+}
+
+/**
+ * @brief Minuit2 objective for a Gaussian with free positive amplitude.
  *
  * All references are borrowed only for the synchronous lifetime of one fit.
  * No reference or pointer escapes the fit call.
@@ -218,16 +246,18 @@ public:
           estimator_(estimator) {}
 
     /**
-     * @brief Evaluate the configured objective from one log-radius parameter.
-     * @param parameters Minuit external parameters; index zero is log(R).
+     * @brief Evaluate the configured objective from log-radius and log-amplitude.
+     * @param parameters Minuit external parameters: log(R), log(A_G), where
+     *        A_G multiplies the unnormalized exact-bin Gaussian integral.
      * @return Finite deviance, or the largest finite double for an invalid
      *         model evaluation. Returned minima are validated explicitly.
      */
     double operator()(const std::vector<double>& parameters) const override {
-        if (parameters.size() != 1U) {
+        if (parameters.size() != 2U) {
             return std::numeric_limits<double>::max();
         }
         const double radius = std::exp(parameters[0]);
+        const double amplitude = std::exp(parameters[1]);
         try {
             const std::vector<double> probabilities =
                 gaussian_bin_probabilities(
@@ -236,18 +266,21 @@ public:
                     region_,
                     radius
                 );
+            const double normalization = amplitude * gaussian_region_integral(
+                family_, binning_, region_, radius
+            );
             switch (estimator_) {
                 case FitEstimator::Poisson:
                     return binned_poisson_deviance(
-                        bins_, offset_, region_, probabilities
+                        bins_, offset_, region_, probabilities, normalization
                     );
                 case FitEstimator::Neyman:
                     return binned_neyman_chi_square(
-                        bins_, offset_, region_, probabilities
+                        bins_, offset_, region_, probabilities, normalization
                     );
                 case FitEstimator::Pearson:
                     return binned_pearson_chi_square(
-                        bins_, offset_, region_, probabilities
+                        bins_, offset_, region_, probabilities, normalization
                     );
             }
         } catch (const std::exception&) {
@@ -422,7 +455,8 @@ bool gaussian_minimum_is_evaluable(
 ) {
     try {
         const std::vector<double> parameters{
-            minimum.UserState().Value(0U)
+            minimum.UserState().Value(0U),
+            minimum.UserState().Value(1U)
         };
         const double value = objective(parameters);
         return std::isfinite(value) &&
@@ -506,14 +540,17 @@ FitParameterEstimate direct_parameter_estimate(
  * @brief Execute one independent pure-Gaussian MIGRAD start.
  * @param objective Borrowed synchronous Minuit objective.
  * @param radius_seed Strictly positive physical radius seed.
+ * @param amplitude_seed Strictly positive Gaussian amplitude seed.
  * @return FunctionMinimum plus its stable diagnostic.
  */
 std::pair<FunctionMinimum, MigradDiagnostic> run_gaussian_migrad(
     GaussianObjective& objective,
-    double radius_seed
+    double radius_seed,
+    double amplitude_seed
 ) {
     MnUserParameters parameters;
     parameters.Add("log_r", std::log(radius_seed), 0.1);
+    parameters.Add("log_A_G", std::log(amplitude_seed), 0.1);
     MnMigrad migrad(objective, parameters);
     FunctionMinimum minimum = migrad();
     const bool objective_failure =
@@ -646,7 +683,7 @@ GaussianFitResult fit_gaussian_model(
 ) {
     const std::size_t selected_bins =
         region.last_bin - region.first_bin + 1U;
-    if (selected_bins < 2U || region.selected_count == 0U) {
+    if (selected_bins < 3U || region.selected_count == 0U) {
         return invalid_gaussian(FitFailureReason::InsufficientBins, estimator);
     }
 
@@ -686,7 +723,18 @@ GaussianFitResult fit_gaussian_model(
         GaussianObjective objective(
             family, bins, offset, binning, region, estimator
         );
-        auto start = run_gaussian_migrad(objective, radius_seeds[index]);
+        double amplitude_seed = 0.0;
+        try {
+            amplitude_seed = 1.0 / gaussian_region_integral(
+                family, binning, region, radius_seeds[index]
+            );
+        } catch (const std::exception&) {
+            result.failure_reason = FitFailureReason::ObjectiveEvaluation;
+            return result;
+        }
+        auto start = run_gaussian_migrad(
+            objective, radius_seeds[index], amplitude_seed
+        );
         result.starts[index] = start.second;
         ++result.starts_attempted;
         outcomes.push_back({std::move(start.first), start.second});
@@ -720,9 +768,12 @@ GaussianFitResult fit_gaussian_model(
 
     FunctionMinimum& selected = outcomes[selected_index].minimum;
     const double log_radius = selected.UserState().Value(0U);
+    const double log_amplitude = selected.UserState().Value(1U);
     const double radius = std::exp(log_radius);
-    if (!std::isfinite(log_radius) || !std::isfinite(radius) ||
-        radius <= 0.0 || !result.q_min.has_value()) {
+    const double amplitude = std::exp(log_amplitude);
+    if (!std::isfinite(log_radius) || !std::isfinite(log_amplitude) ||
+        !std::isfinite(radius) || !std::isfinite(amplitude) ||
+        radius <= 0.0 || amplitude <= 0.0 || !result.q_min.has_value()) {
         result.failure_reason = FitFailureReason::NonFiniteMinimum;
         return result;
     }
@@ -746,20 +797,40 @@ GaussianFitResult fit_gaussian_model(
     MnMinos minos(selected_objective, selected);
     const MinosError radius_error = minos.Minos(0U);
     result.minos_radius = minos_diagnostic(radius_error);
-    const FitFailureReason minos_reason = fit_failure_from_minos(
+    const FitFailureReason radius_minos_reason = fit_failure_from_minos(
         result.minos_radius,
         false
     );
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
+    if (radius_minos_reason != FitFailureReason::None) {
+        result.failure_reason = radius_minos_reason;
+        return result;
+    }
+    const MinosError amplitude_error = minos.Minos(1U);
+    result.minos_amplitude = minos_diagnostic(amplitude_error);
+    const FitFailureReason amplitude_minos_reason = fit_failure_from_minos(
+        result.minos_amplitude,
+        false
+    );
+    if (amplitude_minos_reason != FitFailureReason::None) {
+        result.failure_reason = amplitude_minos_reason;
         return result;
     }
 
     try {
         result.radius = physical_radius_estimate(log_radius, radius_error);
+        result.amplitude = physical_radius_estimate(
+            log_amplitude, amplitude_error
+        );
         result.fitted_pdf = probabilities_to_pdf(probabilities, binning);
+        const double fitted_normalization = amplitude * gaussian_region_integral(
+            family, binning, region, radius
+        );
+        for (double& value : result.fitted_pdf) {
+            value *= fitted_normalization;
+        }
     } catch (const std::exception&) {
         result.radius = std::nullopt;
+        result.amplitude = std::nullopt;
         result.fitted_pdf.clear();
         result.failure_reason = FitFailureReason::NonFiniteMinimum;
         return result;

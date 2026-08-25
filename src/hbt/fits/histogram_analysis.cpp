@@ -58,6 +58,8 @@ GaussianFitResult invalid_gaussian_result(
         std::nullopt,
         empty,
         unattempted_minos(),
+        unattempted_minos(),
+        std::nullopt,
         std::nullopt,
         std::nullopt,
         {}
@@ -196,14 +198,10 @@ ShapeHistogramResult analyze_shape_histogram(
         };
     }
 
-    const std::optional<StatisticalRegion> core_region =
-        select_gaussian_core_region(
-            family,
-            bins,
-            offset,
-            binning,
-            region.value()
-        );
+    // Pure Gaussian fits use the complete shape region. Their free positive
+    // amplitude lets the Gaussian vanish naturally outside the core without
+    // an externally imposed 5%/10% threshold.
+    const std::optional<StatisticalRegion> core_region = region;
     if (apply_radial_slice_quality_cut &&
         region->selected_count < kMinimumRadialSliceSelectedCount) {
         return {
@@ -550,6 +548,7 @@ void require_shape_result(const ShapeHistogramResult& result) {
     for (const GaussianFitResult* gaussian : gaussian_results) {
         if (gaussian->fully_valid) {
             if (!gaussian->radius.has_value() ||
+                !gaussian->amplitude.has_value() ||
                 !gaussian->q_min.has_value() ||
                 !gaussian->selected_start.has_value() ||
                 !result.gaussian_core_region.has_value() ||
@@ -559,6 +558,7 @@ void require_shape_result(const ShapeHistogramResult& result) {
                 );
             }
         } else if (gaussian->radius.has_value() ||
+                   gaussian->amplitude.has_value() ||
                    !gaussian->fitted_pdf.empty()) {
             throw std::logic_error(
                 "HBT analysis state: invalid Gaussian fit has fabricated output"

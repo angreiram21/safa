@@ -22,7 +22,7 @@ namespace hbt {
  * @param bins Slot-major raw uint64_t histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated uniform binning for this histogram family.
- * @param region Validated 10%-core statistical region used by the Gaussian.
+ * @param region Full contiguous shape region used by the Gaussian.
  * @param estimator Statistical objective minimized by this independent fit.
  * @param half_maximum_seed Gaussian R seed obtained from the half-maximum width
  *        of the full selected histogram and converted to model R units.
@@ -31,8 +31,11 @@ namespace hbt {
  *
  * The two deterministic starts are the moment-derived Gaussian radius and
  * @p half_maximum_seed. Both minimize the same estimator independently; the
- * valid minimum with the smallest q is selected. The only free parameter is
- * log(R), so R remains strictly positive without arbitrary physical bounds.
+ * valid minimum with the smallest q is selected. The free parameters are
+ * log(R) and log(A_G), so both radius and Gaussian normalization remain
+ * strictly positive without arbitrary physical bounds. A_G=1 reproduces the
+ * former unit-normalized Gaussian; fitting A_G lets the Gaussian contribution
+ * fall naturally below the total distribution outside the core.
  */
 [[nodiscard]] GaussianFitResult fit_gaussian_model(
     FitObservableFamily family,
@@ -52,7 +55,7 @@ namespace hbt {
  * @param binning Validated uniform binning for this histogram family.
  * @param region Full selected statistical region used by the mixed model.
  * @param estimator Statistical objective minimized by this independent fit.
- * @param gaussian_result Valid 10%-core Gaussian result from the same estimator;
+ * @param gaussian_result Valid full-range free-amplitude Gaussian result from the same estimator;
  *        its fitted radius provides the R_G member of the core-seed set.
  * @param half_maximum_seed Gaussian R seed converted from histogram FWHM.
  * @param core_fraction_policy Origin-dependent physical basin-fraction policy.

@@ -885,36 +885,31 @@ OSL exponential:    exp(-x / R_tail)
 radial exponential: r^2 exp(-r / R_tail)
 ```
 
-The full statistical region keeps the historical contiguous-region semantics and
-is used for presentation normalization and for the mixed model. The pure
-Gaussian has a separate compact core region. A non-increasing PAVA estimate is
-used only to choose the upper Gaussian edge; raw counts are never smoothed in
-the likelihood. Radial core selection starts at the right edge of the modal
-plateau and excludes the first PAVA bin at or below 10% of the raw modal
-maximum. OSL core selection starts at `x = 0` and excludes the first PAVA bin at
-or below 10% of the PAVA level at the origin. In both geometries the existing
-first-empty-bin boundary is the safety limit and the available full-region edge
-is the fallback when the 10% level is not reached.
+The full statistical region keeps the historical contiguous-region semantics
+up to the first empty bin after the mode. It is used by both the pure Gaussian
+and the mixed model. No 5%/10% Gaussian-core threshold is applied. Raw counts
+are never smoothed in the likelihood. PAVA is retained only for the independent
+half-maximum radius seed `R_HM`.
 
-Each component is independently normalized to unit probability over the region
-used by that fit. The mixed probability is
-`f_core * Gaussian + (1 - f_core) * tail`. There is no free amplitude and all
-three mixed estimators use the same expected counts
-`mu_i = N_selected * p_i`. The default production estimator is the binned
-Poisson deviance, which retains observed zero-count bins. Two additional
-independent mixed fits are evaluated with Neyman chi-square
-`sum_(n_i>0) (n_i-mu_i)^2/n_i` and Pearson chi-square
-`sum_i (n_i-mu_i)^2/mu_i`. Neyman deliberately omits observed zero-count bins,
-matching the historical weighting used for the R_core(mT) comparison; Pearson
-retains them. The probability vector must sum to one within an allowance
-derived only from `double` roundoff and the selected-bin count. There is no
-scientific epsilon, post-hoc renormalization, or free fit amplitude.
+For the mixed model, the Gaussian and exponential components are normalized
+independently to unit probability over the selected region and combined as
+`f_core * Gaussian + (1 - f_core) * tail`; mixed fits retain fixed total
+normalization `mu_i = N_selected * p_i`. The pure Gaussian is different: its
+exact-bin shape is multiplied by a free positive amplitude `A_G`, so its
+expected counts need not carry the complete histogram normalization. Poisson,
+Neyman and Pearson remain independent estimators. Neyman deliberately omits
+observed zero-count bins, matching the historical weighting used for the
+R_core(mT) comparison; Pearson and Poisson retain their existing zero-bin
+conventions.
 
 ### ROOT/Minuit2 fitting
 
-The pure Gaussian fit has one physical parameter, `R > 0`, represented through
-a log-radius parameter. Poisson, Neyman and Pearson are fitted independently on
-the same compact 10%-core region. Each estimator runs two deterministic starts:
+The pure Gaussian fit has two positive physical parameters, `R > 0` and
+`A_G > 0`, represented by `log(R)` and `log(A_G)`. Poisson, Neyman and Pearson
+are fitted independently on the full contiguous shape region. The free
+amplitude means the Gaussian is not forced to integrate to the total histogram
+area.
+Each estimator runs two deterministic radius starts:
 the moment-derived Gaussian radius and `R_HM`. `R_HM` is obtained from a
 shape-constrained PAVA estimate before linearly interpolating the half-maximum
 crossing(s): OSL uses a non-increasing envelope from the origin, while radial
@@ -1273,15 +1268,15 @@ outputs).
 Shape directories always contain `fit_parameters.csv`; `distribution.csv` is
 written when a statistical region exists. Distribution columns contain the
 normalized `pdf` and `d_pdf`, plus Gaussian and/or mixed fitted PDF columns only
-when the corresponding fit is fully valid. Gaussian fitted values are written
-only inside the compact Gaussian-core region. The backward-compatible
+when the corresponding fit is fully valid. Gaussian fitted values are written over the full contiguous Gaussian fit
+region. The backward-compatible
 `gaussian_fit_pdf` and `mixed_fit_pdf` columns are the Poisson curves; valid
 alternatives are written as `gaussian_fit_pdf_neyman`,
 `gaussian_fit_pdf_pearson`, `mixed_fit_pdf_neyman` and
 `mixed_fit_pdf_pearson`. All mixed curves span the full statistical region. The
 parameter table contains an explicit `estimator` column. It records the exact
-region used by each fit, independent Poisson/Neyman/Pearson Gaussian `R_G_core`,
-and independent mixed `R_core`, `R_tail`, and `f_core` values, asymmetric MINOS
+region used by each fit, independent Poisson/Neyman/Pearson Gaussian `R_G_core`
+and `A_G`, and independent mixed `R_core`, `R_tail`, and `f_core` values, asymmetric MINOS
 errors, objective minima, covariance state, all 36 mixed-start diagnostics,
 the terminal `R_core`, `R_tail`, and `f_core` coordinates for every mixed start,
 and the selected-minimum basin multiplicity diagnostic.
