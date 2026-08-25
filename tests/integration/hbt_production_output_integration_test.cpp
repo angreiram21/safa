@@ -63,7 +63,8 @@ hbt::HBTConfig make_config() {
             {20U, 0.0, 10.0, 2.0},
             {8U, -4.0, 4.0, 1.0}
         },
-        hbt::OriginMode::Primordial
+        hbt::OriginMode::Primordial,
+        hbt::FitEstimatorMode::All
     };
 }
 
@@ -455,6 +456,62 @@ bool verify_analysis_and_output() {
 }
 
 /**
+ * @brief Verify one configured estimator suppresses the other fit families.
+ * @return true when only Neyman reaches MIGRAD/MINOS and mixed fitting.
+ *
+ * The stable ShapeHistogramResult layout is retained: skipped Poisson and
+ * Pearson slots remain explicit NotApplicable results rather than disappearing
+ * from the derived state.
+ */
+bool verify_single_estimator_selection() {
+    hbt::HBTConfig config = make_config();
+    config.fit_estimator_mode = hbt::FitEstimatorMode::Neyman;
+
+    hbt::RawHistogramState raw = hbt::make_zero_raw_histogram_state(config);
+    hbt::RawHistogramSet& global = raw.products[0U].origins[0U].global;
+    const hbt::StatisticalRegion model_region{0U, 19U, 1U};
+    const std::vector<double> probabilities = hbt::mixed_bin_probabilities(
+        hbt::FitObservableFamily::OSL,
+        config.histogram_config.osl,
+        model_region,
+        0.85,
+        2.4,
+        0.68
+    );
+    const std::vector<std::uint64_t> counts =
+        make_counts(probabilities, 800000U);
+    for (std::size_t bin = 0U; bin < counts.size(); ++bin) {
+        global.osl.bins[bin] = counts[bin];
+    }
+
+    const hbt::HistogramAnalysisState derived =
+        hbt::analyze_histograms(config, raw);
+    const hbt::ShapeHistogramResult& shape =
+        derived.products[0U].origins[0U].global.osl[0U];
+
+    if (shape.gaussian.failure_reason != hbt::FitFailureReason::NotApplicable ||
+        shape.gaussian_pearson.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
+        shape.mixed.failure_reason != hbt::FitFailureReason::NotApplicable ||
+        shape.mixed_pearson.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
+        shape.gaussian.migrad.attempted ||
+        shape.gaussian_pearson.migrad.attempted ||
+        shape.mixed.starts_attempted != 0U ||
+        shape.mixed_pearson.starts_attempted != 0U) {
+        return fail("disabled estimators executed despite Neyman-only mode");
+    }
+
+    if (!shape.gaussian_neyman.fully_valid ||
+        !shape.gaussian_neyman.migrad.attempted ||
+        !shape.mixed_neyman.fully_valid ||
+        shape.mixed_neyman.starts_attempted == 0U) {
+        return fail("Neyman-only mode did not execute the Neyman fit chain");
+    }
+    return true;
+}
+
+/**
  * @brief Verify kT/mT directory tokens follow arbitrary configured edges.
  * @return true when Cartesian slice names preserve both configured ranges.
  *
@@ -532,6 +589,7 @@ bool verify_cartesian_slice_directory_names() {
 int main() {
     try {
         if (!verify_analysis_and_output() ||
+            !verify_single_estimator_selection() ||
             !verify_cartesian_slice_directory_names()) {
             return EXIT_FAILURE;
         }

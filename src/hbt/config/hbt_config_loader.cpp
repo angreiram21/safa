@@ -829,6 +829,41 @@ namespace {
     }
 
     /**
+     * @brief Parse the requested statistical fit-estimator mode.
+     *
+     * Accepted tokens are exactly poisson, neyman, pearson, and all.
+     *
+     * @param node YAML scalar containing hbt_fit_estimator.
+     * @return Resolved estimator execution mode.
+     * @throws std::runtime_error if @p node is not a YAML scalar.
+     * @throws std::invalid_argument if the token is not canonical.
+     */
+    FitEstimatorMode parse_fit_estimator_mode(
+        const YAML::Node& node
+    ) {
+        const std::string value =
+            extract_scalar(node, "hbt_fit_estimator");
+
+        if (value == "poisson") {
+            return FitEstimatorMode::Poisson;
+        }
+        if (value == "neyman") {
+            return FitEstimatorMode::Neyman;
+        }
+        if (value == "pearson") {
+            return FitEstimatorMode::Pearson;
+        }
+        if (value == "all") {
+            return FitEstimatorMode::All;
+        }
+
+        throw std::invalid_argument(
+            "invalid hbt_fit_estimator '" + value +
+            "': expected poisson, neyman, pearson, or all"
+        );
+    }
+
+    /**
      * @brief Parse the requested nested HBT origin-selection mode.
      *
      * Accepted tokens are exactly primordial, primordial_rescattering,
@@ -894,7 +929,8 @@ HBTConfig load_hbt_config(
                 "hbt_particle_acceptance",
                 "hbt_pair_slicing",
                 "hbt_histograms",
-                "hbt_origin_mode"
+                "hbt_origin_mode",
+                "hbt_fit_estimator"
             }
         );
 
@@ -917,6 +953,9 @@ HBTConfig load_hbt_config(
         ),
         parse_origin_mode(
             root_entries.at("hbt_origin_mode")
+        ),
+        parse_fit_estimator_mode(
+            root_entries.at("hbt_fit_estimator")
         )
     };
 }

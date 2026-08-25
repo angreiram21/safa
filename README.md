@@ -357,13 +357,14 @@ the directory containing the global run configuration.
 
 ## HBT configuration
 
-The current HBT configuration contains five required scientific blocks:
+The current HBT configuration contains six required scientific blocks:
 
 - enabled analysis products/channels;
 - particle acceptance;
 - pair-slicing configuration;
 - raw-histogram binning;
-- origin mode.
+- origin mode;
+- fit-estimator mode.
 
 There are no implicit scientific defaults.
 
@@ -606,6 +607,24 @@ routed_P <= routed_PR <= routed_PRD = valid
 
 The three routed counts overlap under `all` and must not be summed as a
 partition of `valid`.
+
+### Fit estimator mode
+
+`hbt_fit_estimator` controls which independent statistical fit estimator is
+executed for both pure-Gaussian and mixed fits. Accepted values are:
+
+```text
+poisson
+neyman
+pearson
+all
+```
+
+Selecting one estimator skips MIGRAD and MINOS completely for the other two.
+Their result slots remain present as explicit `NotApplicable` placeholders so
+the derived-state and CSV schemas stay stable. `all` preserves the historical
+behavior and runs Poisson, Neyman, and Pearson independently. Each mixed fit
+continues to use the pure-Gaussian `R_G` obtained with the same estimator.
 
 ## Current event-preparation pipeline
 
@@ -895,12 +914,14 @@ For the mixed model, the Gaussian and exponential components are normalized
 independently to unit probability over the selected region and combined as
 `f_core * Gaussian + (1 - f_core) * tail`; mixed fits retain fixed total
 normalization `mu_i = N_selected * p_i`. The pure Gaussian is different: its
-exact-bin shape is multiplied by a free positive amplitude `A_G`, so its
-expected counts need not carry the complete histogram normalization. Poisson,
-Neyman and Pearson remain independent estimators. Neyman deliberately omits
-observed zero-count bins, matching the historical weighting used for the
-R_core(mT) comparison; Pearson and Poisson retain their existing zero-bin
-conventions.
+expected count in bin `i` is evaluated directly as
+`mu_i = N_selected * A_G * integral_i[G(R_G)]`, with no unit-sum normalization
+of the Gaussian bin integrals. Far-tail Gaussian integrals and expected counts
+are evaluated logarithmically, so physically non-zero contributions below the
+normal `double` range do not invalidate the fit. Poisson, Neyman and Pearson
+remain independent estimators. Neyman deliberately omits observed zero-count
+bins, matching the historical weighting used for the R_core(mT) comparison;
+Pearson and Poisson retain their existing zero-bin conventions.
 
 ### ROOT/Minuit2 fitting
 
@@ -942,8 +963,11 @@ Among the non-degenerate basins, the basin reached by the largest number of the
 36 deterministic starts is selected. If two basins have the same multiplicity,
 the basin with the smallest objective value wins; a remaining exact tie is
 broken by the lowest start index. Within the selected basin, the valid minimum
-with the smallest objective value is used for MINOS. `R_HM` remains part of the
-deterministic `R_core` seed set but no longer ranks final basins. No ordering
+with the smallest objective value supplies the starting coordinates for one
+fresh final MIGRAD pass. MINOS is then run from this polished Minuit state,
+removing dependence on the covariance/history retained by a particular grid
+start. This final pass does not participate in basin selection. `R_HM` remains
+part of the deterministic `R_core` seed set but no longer ranks final basins. No ordering
 between `R_core` and `R_tail` is imposed. For diagnostic studies, the terminal
 physical `R_core`, `R_tail`, and `f_core` coordinates of every one of the 36
 starts are also serialized, independently of whether that start is ultimately

@@ -144,7 +144,8 @@ namespace {
             << "    min_fm_c: -2.0\n"
             << "    max_fm_c: 2.0\n"
             << "\n"
-            << "hbt_origin_mode: \"all\"\n";
+            << "hbt_origin_mode: \"all\"\n"
+            << "hbt_fit_estimator: \"all\"\n";
 
         if (!file) {
             std::cerr
@@ -354,6 +355,14 @@ namespace {
                 std::cerr
                     << "hbt_config_gate_test: loaded HBTConfig contains the "
                     << "wrong origin mode.\n";
+                return false;
+            }
+
+            if (hbt_config->fit_estimator_mode !=
+                hbt::FitEstimatorMode::All) {
+                std::cerr
+                    << "hbt_config_gate_test: loaded HBTConfig has the "
+                    << "wrong fit estimator mode.\n";
                 return false;
             }
 

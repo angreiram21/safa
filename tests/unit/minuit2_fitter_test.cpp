@@ -203,13 +203,15 @@ bool verify_mixed_multistart_and_minos() {
             !mixed.start_endpoints[selected_index].tail_radius.has_value() ||
             !mixed.start_endpoints[selected_index].core_fraction.has_value() ||
             !mixed.q_min.has_value() ||
-            !mixed.starts[selected_index].q_min.has_value() ||
+            hbt::fit_failure_from_migrad(mixed.selected_migrad) !=
+                hbt::FitFailureReason::None ||
+            !mixed.selected_migrad.q_min.has_value() ||
             std::fabs(
-                mixed.q_min.value() - mixed.starts[selected_index].q_min.value()
+                mixed.q_min.value() - mixed.selected_migrad.q_min.value()
             ) > 1.0e-10 ||
             mixed.consensus_size == 0U) {
             return fail(
-                "mixed estimator did not preserve its selected non-degenerate basin"
+                "mixed estimator did not preserve and polish its selected non-degenerate basin"
             );
         }
         if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
@@ -230,20 +232,20 @@ bool verify_mixed_multistart_and_minos() {
         }
         const hbt::MixedStartEndpointDiagnostic& selected_endpoint =
             mixed.start_endpoints[selected_index];
-        if (std::fabs(
-                selected_endpoint.core_radius.value() -
+        if (std::fabs(std::log(
+                selected_endpoint.core_radius.value() /
                 mixed.core_radius->value
-            ) > 1.0e-10 ||
-            std::fabs(
-                selected_endpoint.tail_radius.value() -
+            )) > hbt::kMixedBasinLogRadiusTolerance ||
+            std::fabs(std::log(
+                selected_endpoint.tail_radius.value() /
                 mixed.tail_radius->value
-            ) > 1.0e-10 ||
+            )) > hbt::kMixedBasinLogRadiusTolerance ||
             std::fabs(
                 selected_endpoint.core_fraction.value() -
                 mixed.core_fraction->value
-            ) > 1.0e-10) {
+            ) > hbt::kMixedBasinCoreFractionTolerance) {
             return fail(
-                "selected mixed start endpoint does not match published values"
+                "post-selection MIGRAD polishing left the selected mixed basin"
             );
         }
         if (!(mixed.core_fraction->value >

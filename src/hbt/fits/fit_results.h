@@ -341,8 +341,10 @@ struct GaussianFitResult {
  * strict f_core admissibility filter, the basin reached by the largest number
  * of converged deterministic starts is selected. Equal-size basins are ranked
  * by their smallest q and then by lowest start index. The valid minimum with
- * the smallest q inside the selected basin is then selected for MINOS.
- * `consensus_size` records the selected basin multiplicity and is not an
+ * the smallest q inside the selected basin supplies the physical coordinates
+ * for one final fresh MIGRAD pass. MINOS is launched from that polished
+ * minimum rather than from the retained internal state of an individual grid
+ * start. `consensus_size` records the selected basin multiplicity and is not an
  * independent acceptance veto. R_HM remains a deterministic seed only.
  */
 struct MixedFitResult {
@@ -361,7 +363,7 @@ struct MixedFitResult {
     std::size_t consensus_size;        ///< Same-basin multiplicity of selected minimum.
     /// Zero-based lowest-q start inside the selected largest basin.
     std::optional<std::size_t> selected_core_start;
-    MigradDiagnostic selected_migrad;  ///< Selected minimum MIGRAD diagnostic.
+    MigradDiagnostic selected_migrad;  ///< Final post-selection MIGRAD diagnostic used by MINOS.
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.

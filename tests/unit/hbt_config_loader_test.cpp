@@ -164,7 +164,9 @@ namespace {
             "\n"
             "hbt_origin_mode: \"";
         text += origin_mode;
-        text += "\"\n";
+        text +=
+            "\"\n"
+            "hbt_fit_estimator: \"all\"\n";
 
         return text;
     }
@@ -349,6 +351,14 @@ namespace {
                     << "hbt_config_loader_test: "
                     << test_name
                     << " resolved the wrong origin mode.\n";
+                return false;
+            }
+
+            if (config.fit_estimator_mode != hbt::FitEstimatorMode::All) {
+                std::cerr
+                    << "hbt_config_loader_test: "
+                    << test_name
+                    << " resolved the wrong fit estimator mode.\n";
                 return false;
             }
 
@@ -740,6 +750,68 @@ namespace {
     }
 
     /**
+     * @brief Verify all canonical fit-estimator tokens.
+     * @return true when every accepted token resolves exactly.
+     */
+    bool verify_fit_estimator_tokens() {
+        struct EstimatorCase {
+            const char* token;
+            hbt::FitEstimatorMode expected;
+            const char* filename;
+        };
+
+        const EstimatorCase cases[] = {
+            {"poisson", hbt::FitEstimatorMode::Poisson,
+             "hbt_config_loader_test_estimator_poisson.yaml"},
+            {"neyman", hbt::FitEstimatorMode::Neyman,
+             "hbt_config_loader_test_estimator_neyman.yaml"},
+            {"pearson", hbt::FitEstimatorMode::Pearson,
+             "hbt_config_loader_test_estimator_pearson.yaml"},
+            {"all", hbt::FitEstimatorMode::All,
+             "hbt_config_loader_test_estimator_all.yaml"}
+        };
+
+        for (const EstimatorCase& test_case : cases) {
+            std::string contents = make_valid_config();
+            if (!replace_once(
+                    contents,
+                    "hbt_fit_estimator: \"all\"\n",
+                    std::string("hbt_fit_estimator: \"") +
+                        test_case.token + "\"\n"
+                )) {
+                return false;
+            }
+
+            const std::filesystem::path path = test_case.filename;
+            remove_test_file(path);
+            if (!write_test_file(path, contents)) {
+                return false;
+            }
+            try {
+                const hbt::HBTConfig config = hbt::load_hbt_config(path);
+                remove_test_file(path);
+                if (config.fit_estimator_mode != test_case.expected) {
+                    std::cerr
+                        << "hbt_config_loader_test: estimator token "
+                        << test_case.token
+                        << " resolved incorrectly.\n";
+                    return false;
+                }
+            } catch (const std::exception& exception) {
+                remove_test_file(path);
+                std::cerr
+                    << "hbt_config_loader_test: estimator token "
+                    << test_case.token
+                    << " unexpectedly threw: "
+                    << exception.what()
+                    << ".\n";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * @brief Verify that unquoted enabled-channel scalars remain valid YAML.
      *
      * @return true when the unquoted scalar resolves successfully.
@@ -928,6 +1000,12 @@ namespace {
                 "hbt_config_loader_test_missing_origin.yaml"
             },
             {
+                "missing hbt_fit_estimator",
+                "hbt_fit_estimator: \"all\"\n",
+                "",
+                "hbt_config_loader_test_missing_estimator.yaml"
+            },
+            {
                 "unknown root key",
                 "hbt_origin_mode: \"all\"\n",
                 "hbt_origin_mode: \"all\"\n"
@@ -940,6 +1018,13 @@ namespace {
                 "hbt_origin_mode: \"all\"\n"
                 "hbt_origin_mode: \"all\"\n",
                 "hbt_config_loader_test_duplicate_root.yaml"
+            },
+            {
+                "duplicate hbt_fit_estimator",
+                "hbt_fit_estimator: \"all\"\n",
+                "hbt_fit_estimator: \"all\"\n"
+                "hbt_fit_estimator: \"all\"\n",
+                "hbt_config_loader_test_duplicate_estimator.yaml"
             },
             {
                 "missing hbt_histograms",
@@ -1178,6 +1263,13 @@ namespace {
                 "hbt_origin_mode:\n"
                 "  - all\n",
                 "hbt_config_loader_test_origin_non_scalar.yaml"
+            },
+            {
+                "non-scalar fit estimator",
+                "hbt_fit_estimator: \"all\"\n",
+                "hbt_fit_estimator:\n"
+                "  - neyman\n",
+                "hbt_config_loader_test_estimator_non_scalar.yaml"
             }
         };
 
@@ -1231,6 +1323,12 @@ namespace {
                 "\"pseudorapidity\"",
                 "\"Pseudorapidity\"",
                 "hbt_config_loader_test_invalid_longitudinal.yaml"
+            },
+            {
+                "invalid fit estimator",
+                "hbt_fit_estimator: \"all\"\n",
+                "hbt_fit_estimator: \"Neyman\"\n",
+                "hbt_config_loader_test_estimator_invalid.yaml"
             },
             {
                 "invalid origin mode",
@@ -1426,6 +1524,10 @@ int main() {
     }
 
     if (!verify_valid_tokens()) {
+        success = false;
+    }
+
+    if (!verify_fit_estimator_tokens()) {
         success = false;
     }
 

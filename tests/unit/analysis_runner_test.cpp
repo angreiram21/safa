@@ -169,7 +169,8 @@ std::string valid_hbt_config_text() {
         "    min_fm_c: -2.0\n"
         "    max_fm_c: 2.0\n"
         "\n"
-        "hbt_origin_mode: \"all\"\n";
+        "hbt_origin_mode: \"all\"\n"
+        "hbt_fit_estimator: \"all\"\n";
 }
 
 /**

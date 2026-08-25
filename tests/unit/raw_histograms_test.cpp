@@ -71,7 +71,8 @@ hbt::HBTConfig make_config(
             {4U, 0.0, 4.0, 1.0},
             {4U, -2.0, 2.0, 1.0}
         },
-        origin_mode
+        origin_mode,
+        hbt::FitEstimatorMode::All
     };
 }
 

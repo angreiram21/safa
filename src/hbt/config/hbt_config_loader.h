@@ -29,6 +29,7 @@ namespace hbt {
      *     hbt_pair_slicing
      *     hbt_histograms
      *     hbt_origin_mode
+     *     hbt_fit_estimator
      *
      * hbt_enabled_channels is resolved into the HBTSelection stored in
      * HBTConfig.
@@ -43,6 +44,9 @@ namespace hbt {
      * histogram binning. No scientific histogram defaults are supplied.
      *
      * hbt_origin_mode provides the requested nested HBT origin-selection mode.
+     *
+     * hbt_fit_estimator selects poisson, neyman, pearson, or all independent
+     * Gaussian and mixed fit estimators.
      *
      * Global run controls, module activation, input/output paths, resource
      * settings, and module-configuration file locations are not interpreted by

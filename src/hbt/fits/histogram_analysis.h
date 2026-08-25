@@ -26,7 +26,9 @@ namespace hbt {
  * @p raw and never modifies raw counts. It performs no event, subevent, pair,
  * frame, kinematic, routing, or histogram accumulation work. All fits and
  * delta-t statistics are completed before final presentation normalization is
- * materialized in the returned state.
+ * materialized in the returned state. config.fit_estimator_mode controls which
+ * of Poisson, Neyman, and Pearson Gaussian/mixed fits are executed; skipped
+ * estimators remain explicit NotApplicable results.
  */
 [[nodiscard]] HistogramAnalysisState analyze_histograms(
     const HBTConfig& config,

@@ -106,6 +106,58 @@ MixedFitResult invalid_mixed_result(
 }
 
 /**
+ * @brief Return whether one estimator is enabled by the configured mode.
+ */
+bool fit_estimator_enabled(
+    FitEstimatorMode mode,
+    FitEstimator estimator
+) {
+    switch (mode) {
+        case FitEstimatorMode::All:
+            return true;
+        case FitEstimatorMode::Poisson:
+            return estimator == FitEstimator::Poisson;
+        case FitEstimatorMode::Neyman:
+            return estimator == FitEstimator::Neyman;
+        case FitEstimatorMode::Pearson:
+            return estimator == FitEstimator::Pearson;
+    }
+    throw std::logic_error("HBT analysis: unknown fit estimator mode");
+}
+
+/**
+ * @brief Build a Gaussian failure or an explicit skipped-estimator result.
+ */
+GaussianFitResult configured_gaussian_failure(
+    FitEstimatorMode mode,
+    FitFailureReason reason,
+    FitEstimator estimator
+) {
+    return invalid_gaussian_result(
+        fit_estimator_enabled(mode, estimator)
+            ? reason
+            : FitFailureReason::NotApplicable,
+        estimator
+    );
+}
+
+/**
+ * @brief Build a mixed failure or an explicit skipped-estimator result.
+ */
+MixedFitResult configured_mixed_failure(
+    FitEstimatorMode mode,
+    FitFailureReason reason,
+    FitEstimator estimator
+) {
+    return invalid_mixed_result(
+        fit_estimator_enabled(mode, estimator)
+            ? reason
+            : FitFailureReason::NotApplicable,
+        estimator
+    );
+}
+
+/**
  * @brief Build a derived shape placeholder for an intentionally skipped fit.
  * @return Empty, explicitly not-applicable Gaussian and mixed results.
  *
@@ -152,8 +204,11 @@ constexpr std::uint64_t kMinimumRadialSliceSelectedCount = 0U;
  * @param apply_radial_slice_quality_cut Whether the configured radial kinetic
  *        slice threshold is evaluated for this histogram.
  * @param core_fraction_policy Origin-dependent mixed-basin f_core policy.
- * @return Full/core regions plus three independent Gaussian fits and three
- *         independent mixed fits (Poisson, Neyman, Pearson).
+ * @param estimator_mode Configured estimator set to execute. Disabled
+ *        estimators are returned explicitly as NotApplicable and are never
+ *        passed to MIGRAD or MINOS.
+ * @return Full/core regions plus configured independent Gaussian and mixed
+ *         fits, with stable NotApplicable placeholders for skipped estimators.
  *
  * N_selected and both statistical regions are established before any fit and
  * are never modified by estimator choice. The half-maximum radius seed is
@@ -167,7 +222,8 @@ ShapeHistogramResult analyze_shape_histogram(
     std::size_t offset,
     const HistogramBinningConfig& binning,
     bool apply_radial_slice_quality_cut,
-    MixedCoreFractionPolicy core_fraction_policy
+    MixedCoreFractionPolicy core_fraction_policy,
+    FitEstimatorMode estimator_mode
 ) {
     const std::optional<StatisticalRegion> region =
         select_shape_region(bins, offset, binning);
@@ -177,23 +233,35 @@ ShapeHistogramResult analyze_shape_histogram(
             std::nullopt,
             0U,
             {},
-            invalid_gaussian_result(
-                FitFailureReason::EmptyHistogram, FitEstimator::Poisson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::EmptyHistogram,
+                FitEstimator::Poisson
             ),
-            invalid_gaussian_result(
-                FitFailureReason::EmptyHistogram, FitEstimator::Neyman
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::EmptyHistogram,
+                FitEstimator::Neyman
             ),
-            invalid_gaussian_result(
-                FitFailureReason::EmptyHistogram, FitEstimator::Pearson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::EmptyHistogram,
+                FitEstimator::Pearson
             ),
-            invalid_mixed_result(
-                FitFailureReason::EmptyHistogram, FitEstimator::Poisson
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::EmptyHistogram,
+                FitEstimator::Poisson
             ),
-            invalid_mixed_result(
-                FitFailureReason::EmptyHistogram, FitEstimator::Neyman
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::EmptyHistogram,
+                FitEstimator::Neyman
             ),
-            invalid_mixed_result(
-                FitFailureReason::EmptyHistogram, FitEstimator::Pearson
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::EmptyHistogram,
+                FitEstimator::Pearson
             )
         };
     }
@@ -209,23 +277,35 @@ ShapeHistogramResult analyze_shape_histogram(
             core_region,
             region->selected_count,
             {},
-            invalid_gaussian_result(
-                FitFailureReason::InsufficientStatistics, FitEstimator::Poisson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientStatistics,
+                FitEstimator::Poisson
             ),
-            invalid_gaussian_result(
-                FitFailureReason::InsufficientStatistics, FitEstimator::Neyman
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientStatistics,
+                FitEstimator::Neyman
             ),
-            invalid_gaussian_result(
-                FitFailureReason::InsufficientStatistics, FitEstimator::Pearson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientStatistics,
+                FitEstimator::Pearson
             ),
-            invalid_mixed_result(
-                FitFailureReason::InsufficientStatistics, FitEstimator::Poisson
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientStatistics,
+                FitEstimator::Poisson
             ),
-            invalid_mixed_result(
-                FitFailureReason::InsufficientStatistics, FitEstimator::Neyman
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientStatistics,
+                FitEstimator::Neyman
             ),
-            invalid_mixed_result(
-                FitFailureReason::InsufficientStatistics, FitEstimator::Pearson
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientStatistics,
+                FitEstimator::Pearson
             )
         };
     }
@@ -235,24 +315,33 @@ ShapeHistogramResult analyze_shape_histogram(
             std::nullopt,
             region->selected_count,
             {},
-            invalid_gaussian_result(
-                FitFailureReason::InsufficientBins, FitEstimator::Poisson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientBins,
+                FitEstimator::Poisson
             ),
-            invalid_gaussian_result(
-                FitFailureReason::InsufficientBins, FitEstimator::Neyman
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientBins,
+                FitEstimator::Neyman
             ),
-            invalid_gaussian_result(
-                FitFailureReason::InsufficientBins, FitEstimator::Pearson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InsufficientBins,
+                FitEstimator::Pearson
             ),
-            invalid_mixed_result(
+            configured_mixed_failure(
+                estimator_mode,
                 FitFailureReason::InvalidGaussianCoreAnchor,
                 FitEstimator::Poisson
             ),
-            invalid_mixed_result(
+            configured_mixed_failure(
+                estimator_mode,
                 FitFailureReason::InvalidGaussianCoreAnchor,
                 FitEstimator::Neyman
             ),
-            invalid_mixed_result(
+            configured_mixed_failure(
+                estimator_mode,
                 FitFailureReason::InvalidGaussianCoreAnchor,
                 FitEstimator::Pearson
             )
@@ -272,28 +361,43 @@ ShapeHistogramResult analyze_shape_histogram(
             core_region,
             region->selected_count,
             {},
-            invalid_gaussian_result(
-                FitFailureReason::InvalidHalfMaximumSeed, FitEstimator::Poisson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InvalidHalfMaximumSeed,
+                FitEstimator::Poisson
             ),
-            invalid_gaussian_result(
-                FitFailureReason::InvalidHalfMaximumSeed, FitEstimator::Neyman
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InvalidHalfMaximumSeed,
+                FitEstimator::Neyman
             ),
-            invalid_gaussian_result(
-                FitFailureReason::InvalidHalfMaximumSeed, FitEstimator::Pearson
+            configured_gaussian_failure(
+                estimator_mode,
+                FitFailureReason::InvalidHalfMaximumSeed,
+                FitEstimator::Pearson
             ),
-            invalid_mixed_result(
-                FitFailureReason::InvalidHalfMaximumSeed, FitEstimator::Poisson
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::InvalidHalfMaximumSeed,
+                FitEstimator::Poisson
             ),
-            invalid_mixed_result(
-                FitFailureReason::InvalidHalfMaximumSeed, FitEstimator::Neyman
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::InvalidHalfMaximumSeed,
+                FitEstimator::Neyman
             ),
-            invalid_mixed_result(
-                FitFailureReason::InvalidHalfMaximumSeed, FitEstimator::Pearson
+            configured_mixed_failure(
+                estimator_mode,
+                FitFailureReason::InvalidHalfMaximumSeed,
+                FitEstimator::Pearson
             )
         };
     }
 
-    GaussianFitResult gaussian = fit_gaussian_model(
+    GaussianFitResult gaussian = fit_estimator_enabled(
+        estimator_mode,
+        FitEstimator::Poisson
+    ) ? fit_gaussian_model(
         family,
         bins,
         offset,
@@ -301,8 +405,14 @@ ShapeHistogramResult analyze_shape_histogram(
         core_region.value(),
         FitEstimator::Poisson,
         half_maximum_seed.value()
+    ) : invalid_gaussian_result(
+        FitFailureReason::NotApplicable,
+        FitEstimator::Poisson
     );
-    GaussianFitResult gaussian_neyman = fit_gaussian_model(
+    GaussianFitResult gaussian_neyman = fit_estimator_enabled(
+        estimator_mode,
+        FitEstimator::Neyman
+    ) ? fit_gaussian_model(
         family,
         bins,
         offset,
@@ -310,8 +420,14 @@ ShapeHistogramResult analyze_shape_histogram(
         core_region.value(),
         FitEstimator::Neyman,
         half_maximum_seed.value()
+    ) : invalid_gaussian_result(
+        FitFailureReason::NotApplicable,
+        FitEstimator::Neyman
     );
-    GaussianFitResult gaussian_pearson = fit_gaussian_model(
+    GaussianFitResult gaussian_pearson = fit_estimator_enabled(
+        estimator_mode,
+        FitEstimator::Pearson
+    ) ? fit_gaussian_model(
         family,
         bins,
         offset,
@@ -319,9 +435,15 @@ ShapeHistogramResult analyze_shape_histogram(
         core_region.value(),
         FitEstimator::Pearson,
         half_maximum_seed.value()
+    ) : invalid_gaussian_result(
+        FitFailureReason::NotApplicable,
+        FitEstimator::Pearson
     );
 
-    MixedFitResult mixed = fit_mixed_model(
+    MixedFitResult mixed = fit_estimator_enabled(
+        estimator_mode,
+        FitEstimator::Poisson
+    ) ? fit_mixed_model(
         family,
         bins,
         offset,
@@ -331,8 +453,14 @@ ShapeHistogramResult analyze_shape_histogram(
         gaussian,
         half_maximum_seed.value(),
         core_fraction_policy
+    ) : invalid_mixed_result(
+        FitFailureReason::NotApplicable,
+        FitEstimator::Poisson
     );
-    MixedFitResult mixed_neyman = fit_mixed_model(
+    MixedFitResult mixed_neyman = fit_estimator_enabled(
+        estimator_mode,
+        FitEstimator::Neyman
+    ) ? fit_mixed_model(
         family,
         bins,
         offset,
@@ -342,8 +470,14 @@ ShapeHistogramResult analyze_shape_histogram(
         gaussian_neyman,
         half_maximum_seed.value(),
         core_fraction_policy
+    ) : invalid_mixed_result(
+        FitFailureReason::NotApplicable,
+        FitEstimator::Neyman
     );
-    MixedFitResult mixed_pearson = fit_mixed_model(
+    MixedFitResult mixed_pearson = fit_estimator_enabled(
+        estimator_mode,
+        FitEstimator::Pearson
+    ) ? fit_mixed_model(
         family,
         bins,
         offset,
@@ -353,6 +487,9 @@ ShapeHistogramResult analyze_shape_histogram(
         gaussian_pearson,
         half_maximum_seed.value(),
         core_fraction_policy
+    ) : invalid_mixed_result(
+        FitFailureReason::NotApplicable,
+        FitEstimator::Pearson
     );
     return {
         region,
@@ -411,14 +548,18 @@ DeltaTHistogramResult analyze_delta_t_histogram(
  *        machinery applies to this one-dimensional radial mT slice. The
  *        current threshold is zero, so no non-empty slice is vetoed by it.
  * @param core_fraction_policy Origin-dependent mixed-basin f_core policy.
- * @return Derived state with fits/moments complete and normalization empty.
+ * @param estimator_mode Configured estimator set propagated to every OSL and
+ *        radial fit in this destination.
+ * @return Derived state with configured fits/moments complete and
+ *         normalization empty.
  */
 DerivedHistogramSet analyze_histogram_set(
     const HBTHistogramConfig& config,
     const RawHistogramSet& raw,
     bool kinetic_slice,
     bool apply_radial_mt_quality_cut,
-    MixedCoreFractionPolicy core_fraction_policy
+    MixedCoreFractionPolicy core_fraction_policy,
+    FitEstimatorMode estimator_mode
 ) {
     DerivedHistogramSet result{};
     for (std::size_t slot = 0U; slot < result.osl.size(); ++slot) {
@@ -430,7 +571,8 @@ DerivedHistogramSet analyze_histogram_set(
                 slot * config.osl.nbins,
                 config.osl,
                 false,
-                core_fraction_policy
+                core_fraction_policy,
+                estimator_mode
             );
     }
     for (std::size_t slot = 0U; slot < result.radial.size(); ++slot) {
@@ -440,7 +582,8 @@ DerivedHistogramSet analyze_histogram_set(
             slot * config.radial.nbins,
             config.radial,
             apply_radial_mt_quality_cut,
-            core_fraction_policy
+            core_fraction_policy,
+            estimator_mode
         );
     }
     for (std::size_t slot = 0U; slot < result.delta_t.size(); ++slot) {
@@ -689,7 +832,8 @@ HistogramAnalysisState analyze_histograms(
                 raw_origin.global,
                 false,
                 false,
-                core_fraction_policy
+                core_fraction_policy,
+                config.fit_estimator_mode
             );
             derived_origin.slices.resize(raw_origin.slices.size());
             const bool apply_radial_mt_quality_cut =
@@ -703,7 +847,8 @@ HistogramAnalysisState analyze_histograms(
                     raw_origin.slices[slice],
                     true,
                     apply_radial_mt_quality_cut,
-                    core_fraction_policy
+                    core_fraction_policy,
+                    config.fit_estimator_mode
                 );
             }
         }

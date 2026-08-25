@@ -74,8 +74,10 @@ namespace hbt {
  * the remaining basins, every origin selects the basin reached by the largest
  * number of converged deterministic starts. Equal-size basins are ranked by
  * their smallest q and then by lowest start index. The smallest-q start inside
- * the selected basin goes to MINOS. R_HM remains in the deterministic core-seed
- * set but does not rank final basins. If every basin is degenerate, the mixed
+ * the selected basin supplies the coordinates for one fresh post-selection
+ * MIGRAD pass, and MINOS is run from that polished Minuit state. The polishing
+ * pass does not participate in basin selection. R_HM remains in the
+ * deterministic core-seed set but does not rank final basins. If every basin is degenerate, the mixed
  * fit is invalidated with DegenerateCoreFraction.
  * The terminal physical R_core, R_tail and f_core coordinates of every start
  * are retained for post-run basin inspection, including finite endpoints from

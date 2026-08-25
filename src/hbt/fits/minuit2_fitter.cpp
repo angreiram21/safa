@@ -981,21 +981,65 @@ MixedFitResult fit_mixed_model(
     }
     const std::size_t selected_start = selected_index.value();
     result.selected_core_start = selected_start;
-    result.selected_migrad = outcomes[selected_start].diagnostic;
-    result.q_min = result.selected_migrad.q_min;
     result.consensus_size = selected_mixed_basin_size(
         outcomes,
         valid_indices,
         selected_start
     );
 
-    FunctionMinimum& selected = outcomes[selected_start].minimum;
+    // Basin selection is based only on the original deterministic start grid.
+    // Re-run MIGRAD once from the selected endpoint using fresh user parameters
+    // before MINOS. This canonicalizes the Minuit state used for profiling and
+    // removes accidental dependence on the covariance/history of whichever
+    // deterministic start happened to have the smallest terminal q in the
+    // selected basin.
+    const FunctionMinimum& basin_minimum = outcomes[selected_start].minimum;
+    const double basin_log_core = basin_minimum.UserState().Value(0U);
+    const double basin_log_tail = basin_minimum.UserState().Value(1U);
+    const double basin_core_fraction = basin_minimum.UserState().Value(2U);
+    const double basin_core_radius = std::exp(basin_log_core);
+    const double basin_tail_radius = std::exp(basin_log_tail);
+    if (!std::isfinite(basin_log_core) || !std::isfinite(basin_log_tail) ||
+        !std::isfinite(basin_core_fraction) ||
+        !std::isfinite(basin_core_radius) ||
+        !std::isfinite(basin_tail_radius) || basin_core_radius <= 0.0 ||
+        basin_tail_radius <= 0.0) {
+        result.failure_reason = FitFailureReason::NonFiniteMinimum;
+        return result;
+    }
+    const FitFailureReason basin_fraction_reason =
+        mixed_core_fraction_failure(basin_core_fraction);
+    if (basin_fraction_reason != FitFailureReason::None) {
+        result.failure_reason = basin_fraction_reason;
+        return result;
+    }
+
+    MixedObjective selected_objective(
+        family, bins, offset, binning, region, estimator
+    );
+    auto polished = run_mixed_migrad(
+        selected_objective,
+        basin_core_radius,
+        basin_tail_radius,
+        basin_core_fraction
+    );
+    result.selected_migrad = polished.second;
+    result.q_min = result.selected_migrad.q_min;
+    const FitFailureReason polishing_reason =
+        fit_failure_from_migrad(result.selected_migrad);
+    if (polishing_reason != FitFailureReason::None) {
+        result.failure_reason = polishing_reason;
+        return result;
+    }
+
+    FunctionMinimum& selected = polished.first;
     const double log_core = selected.UserState().Value(0U);
     const double log_tail = selected.UserState().Value(1U);
     const double core_fraction = selected.UserState().Value(2U);
     const double core_radius = std::exp(log_core);
     const double tail_radius = std::exp(log_tail);
-    if (!std::isfinite(core_radius) || !std::isfinite(tail_radius) ||
+    if (!std::isfinite(log_core) || !std::isfinite(log_tail) ||
+        !std::isfinite(core_radius) || !std::isfinite(tail_radius) ||
         !std::isfinite(core_fraction) || core_radius <= 0.0 ||
         tail_radius <= 0.0 || !result.q_min.has_value()) {
         result.failure_reason = FitFailureReason::NonFiniteMinimum;
@@ -1023,9 +1067,6 @@ MixedFitResult fit_mixed_model(
         return result;
     }
 
-    MixedObjective selected_objective(
-        family, bins, offset, binning, region, estimator
-    );
     MnMinos minos(selected_objective, selected);
     const MinosError core_error = minos.Minos(0U);
     result.minos_core_radius = minos_diagnostic(core_error);

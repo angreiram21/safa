@@ -85,3 +85,11 @@ hbt_histograms:
 # - primordial_rescattering_decay
 # - all: request all three nested origin selections in the same run
 hbt_origin_mode: "all"
+
+# Statistical estimator used for pure-Gaussian and mixed fits.
+# Allowed values:
+# - poisson
+# - neyman
+# - pearson
+# - all: execute all three estimators independently
+hbt_fit_estimator: "all"

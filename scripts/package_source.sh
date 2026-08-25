@@ -33,6 +33,9 @@ rm -f "${output_path}"
     "${project_name}/docs/doxygen/*" \
     "${project_name}/docs/doxygen-warnings.log" \
     "${project_name}/output/*" \
+    "${project_name}/output.zip" \
+    "${project_name}/paper*" \
+    "${project_name}/run*" \
     "${project_name}/.git/*" \
     "*/.DS_Store" \
     "*/._*" \

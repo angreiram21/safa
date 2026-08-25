@@ -308,7 +308,8 @@ std::string hbt_config_text(
         "    nbins: 40\n"
         "    min_fm_c: -2.0\n"
         "    max_fm_c: 2.0\n"
-        "hbt_origin_mode: \"" + origin_mode + "\"\n";
+        "hbt_origin_mode: \"" + origin_mode + "\"\n"
+        "hbt_fit_estimator: \"all\"\n";
 }
 
 /**

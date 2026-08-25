@@ -33,6 +33,21 @@ namespace hbt {
         Pseudorapidity  ///< Particle pseudorapidity eta.
     };
 
+
+    /**
+     * @brief Requested statistical estimator set for HBT fits.
+     *
+     * A single estimator executes only its matching pure-Gaussian and mixed
+     * fits. All preserves the historical behavior and executes Poisson,
+     * Neyman, and Pearson independently.
+     */
+    enum class FitEstimatorMode {
+        Poisson, ///< Execute only Poisson fits.
+        Neyman,  ///< Execute only Neyman fits.
+        Pearson, ///< Execute only Pearson fits.
+        All      ///< Execute Poisson, Neyman, and Pearson fits.
+    };
+
     /**
      * @brief Kinematic acceptance cuts shared by one particle-species group.
      *
@@ -232,7 +247,10 @@ namespace hbt {
      *
      * origin_mode stores the requested nested HBT origin-selection mode.
      *
-     * All five members are required scientific state. No implicit scientific
+     * fit_estimator_mode stores which independent statistical estimator fits
+     * are executed.
+     *
+     * All six members are required scientific state. No implicit scientific
      * defaults are provided.
      */
     struct HBTConfig {
@@ -246,6 +264,8 @@ namespace hbt {
         HBTHistogramConfig histogram_config;
         /// Requested nested origin-selection mode.
         OriginMode origin_mode;
+        /// Requested statistical estimator set for Gaussian and mixed fits.
+        FitEstimatorMode fit_estimator_mode;
     };
 
 }  // namespace hbt
