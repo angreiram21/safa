@@ -336,6 +336,19 @@ bool verify_largest_mixed_basin_selection() {
                 "largest-basin test lacks the intended lower-q smaller basin"
             );
         }
+        const std::vector<std::size_t> ranked =
+            hbt::rank_mixed_starts_in_selected_basin(
+                endpoints,
+                q_values,
+                valid_indices,
+                policy
+            );
+        const std::vector<std::size_t> expected{4U, 3U, 2U};
+        if (ranked != expected) {
+            return fail(
+                "selected mixed basin endpoints were not ranked by q"
+            );
+        }
     }
     return true;
 }

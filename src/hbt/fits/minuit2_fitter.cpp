@@ -632,38 +632,6 @@ MixedStartEndpointDiagnostic mixed_start_endpoint_diagnostic(
     return diagnostic;
 }
 
-/**
- * @brief Count valid starts in the connected basin containing one start.
- * @param outcomes Endpoints for every attempted start.
- * @param valid_indices Indices with valid evaluable MIGRAD minima.
- * @param selected_index Valid selected-minimum index.
- * @return Connected same-basin component size containing @p selected_index.
- */
-std::size_t selected_mixed_basin_size(
-    const std::vector<MixedStartOutcome>& outcomes,
-    const std::vector<std::size_t>& valid_indices,
-    std::size_t selected_index
-) {
-    std::vector<bool> visited(outcomes.size(), false);
-    std::vector<std::size_t> stack{selected_index};
-    visited[selected_index] = true;
-    std::size_t count = 0U;
-    while (!stack.empty()) {
-        const std::size_t current = stack.back();
-        stack.pop_back();
-        ++count;
-        for (const std::size_t candidate : valid_indices) {
-            if (!visited[candidate] && same_mixed_basin(
-                    outcomes[current].endpoint,
-                    outcomes[candidate].endpoint
-                )) {
-                visited[candidate] = true;
-                stack.push_back(candidate);
-            }
-        }
-    }
-    return count;
-}
 
 }  // namespace
 
@@ -968,161 +936,207 @@ MixedFitResult fit_mixed_model(
             )
         );
     }
-    const std::optional<std::size_t> selected_index =
-        select_mixed_start_by_largest_basin(
+    const std::vector<std::size_t> candidate_order =
+        rank_mixed_starts_in_selected_basin(
             endpoints,
             q_values,
             valid_indices,
             core_fraction_policy
         );
-    if (!selected_index.has_value()) {
+    if (candidate_order.empty()) {
         result.failure_reason = FitFailureReason::DegenerateCoreFraction;
         return result;
     }
-    const std::size_t selected_start = selected_index.value();
-    result.selected_core_start = selected_start;
-    result.consensus_size = selected_mixed_basin_size(
-        outcomes,
-        valid_indices,
-        selected_start
-    );
 
-    // Basin selection is based only on the original deterministic start grid.
-    // Re-run MIGRAD once from the selected endpoint using fresh user parameters
-    // before MINOS. This canonicalizes the Minuit state used for profiling and
-    // removes accidental dependence on the covariance/history of whichever
-    // deterministic start happened to have the smallest terminal q in the
-    // selected basin.
-    const FunctionMinimum& basin_minimum = outcomes[selected_start].minimum;
-    const double basin_log_core = basin_minimum.UserState().Value(0U);
-    const double basin_log_tail = basin_minimum.UserState().Value(1U);
-    const double basin_core_fraction = basin_minimum.UserState().Value(2U);
-    const double basin_core_radius = std::exp(basin_log_core);
-    const double basin_tail_radius = std::exp(basin_log_tail);
-    if (!std::isfinite(basin_log_core) || !std::isfinite(basin_log_tail) ||
-        !std::isfinite(basin_core_fraction) ||
-        !std::isfinite(basin_core_radius) ||
-        !std::isfinite(basin_tail_radius) || basin_core_radius <= 0.0 ||
-        basin_tail_radius <= 0.0) {
-        result.failure_reason = FitFailureReason::NonFiniteMinimum;
-        return result;
-    }
-    const FitFailureReason basin_fraction_reason =
-        mixed_core_fraction_failure(basin_core_fraction);
-    if (basin_fraction_reason != FitFailureReason::None) {
-        result.failure_reason = basin_fraction_reason;
-        return result;
-    }
+    result.consensus_size = candidate_order.size();
+    result.selected_core_start = candidate_order.front();
 
-    MixedObjective selected_objective(
-        family, bins, offset, binning, region, estimator
-    );
-    auto polished = run_mixed_migrad(
-        selected_objective,
-        basin_core_radius,
-        basin_tail_radius,
-        basin_core_fraction
-    );
-    result.selected_migrad = polished.second;
-    result.q_min = result.selected_migrad.q_min;
-    const FitFailureReason polishing_reason =
-        fit_failure_from_migrad(result.selected_migrad);
-    if (polishing_reason != FitFailureReason::None) {
-        result.failure_reason = polishing_reason;
-        return result;
-    }
+    // The physical basin is fixed once, from the original deterministic start
+    // grid. Its members are then tried in increasing terminal q. Each member
+    // supplies only fresh coordinates for a clean post-selection MIGRAD and
+    // MINOS pass. A numerical failure therefore falls back to another endpoint
+    // of the same already-selected basin; it never changes the physical basin.
+    const auto evaluate_candidate = [&] (
+        std::size_t candidate_start
+    ) -> MixedFitResult {
+        MixedFitResult candidate = result;
+        candidate.selected_core_start = candidate_start;
+        candidate.selected_migrad = unattempted_migrad();
+        candidate.minos_core_radius = unattempted_minos();
+        candidate.minos_tail_radius = unattempted_minos();
+        candidate.minos_core_fraction = unattempted_minos();
+        candidate.q_min = std::nullopt;
+        candidate.core_radius = std::nullopt;
+        candidate.tail_radius = std::nullopt;
+        candidate.core_fraction = std::nullopt;
+        candidate.fitted_pdf.clear();
+        candidate.fully_valid = false;
+        candidate.failure_reason = FitFailureReason::MigradInvalid;
 
-    FunctionMinimum& selected = polished.first;
-    const double log_core = selected.UserState().Value(0U);
-    const double log_tail = selected.UserState().Value(1U);
-    const double core_fraction = selected.UserState().Value(2U);
-    const double core_radius = std::exp(log_core);
-    const double tail_radius = std::exp(log_tail);
-    if (!std::isfinite(log_core) || !std::isfinite(log_tail) ||
-        !std::isfinite(core_radius) || !std::isfinite(tail_radius) ||
-        !std::isfinite(core_fraction) || core_radius <= 0.0 ||
-        tail_radius <= 0.0 || !result.q_min.has_value()) {
-        result.failure_reason = FitFailureReason::NonFiniteMinimum;
-        return result;
-    }
-    const FitFailureReason fraction_reason =
-        mixed_core_fraction_failure(core_fraction);
-    if (fraction_reason != FitFailureReason::None) {
-        result.failure_reason = fraction_reason;
-        return result;
-    }
+        const FunctionMinimum& basin_minimum =
+            outcomes[candidate_start].minimum;
+        const double basin_log_core = basin_minimum.UserState().Value(0U);
+        const double basin_log_tail = basin_minimum.UserState().Value(1U);
+        const double basin_core_fraction = basin_minimum.UserState().Value(2U);
+        const double basin_core_radius = std::exp(basin_log_core);
+        const double basin_tail_radius = std::exp(basin_log_tail);
+        if (!std::isfinite(basin_log_core) ||
+            !std::isfinite(basin_log_tail) ||
+            !std::isfinite(basin_core_fraction) ||
+            !std::isfinite(basin_core_radius) ||
+            !std::isfinite(basin_tail_radius) ||
+            basin_core_radius <= 0.0 || basin_tail_radius <= 0.0) {
+            candidate.failure_reason = FitFailureReason::NonFiniteMinimum;
+            return candidate;
+        }
+        const FitFailureReason basin_fraction_reason =
+            mixed_core_fraction_failure(basin_core_fraction);
+        if (basin_fraction_reason != FitFailureReason::None) {
+            candidate.failure_reason = basin_fraction_reason;
+            return candidate;
+        }
 
-    std::vector<double> probabilities;
-    try {
-        probabilities = mixed_bin_probabilities(
-            family,
-            binning,
-            region,
-            core_radius,
-            tail_radius,
-            core_fraction
+        MixedObjective selected_objective(
+            family, bins, offset, binning, region, estimator
         );
-    } catch (const std::exception&) {
-        result.failure_reason = FitFailureReason::ObjectiveEvaluation;
-        return result;
-    }
-
-    MnMinos minos(selected_objective, selected);
-    const MinosError core_error = minos.Minos(0U);
-    result.minos_core_radius = minos_diagnostic(core_error);
-    FitFailureReason minos_reason = fit_failure_from_minos(
-        result.minos_core_radius,
-        false
-    );
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
-        return result;
-    }
-
-    const MinosError tail_error = minos.Minos(1U);
-    result.minos_tail_radius = minos_diagnostic(tail_error);
-    minos_reason = fit_failure_from_minos(result.minos_tail_radius, false);
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
-        return result;
-    }
-
-    const MinosError fraction_error = minos.Minos(2U);
-    result.minos_core_fraction = minos_diagnostic(fraction_error);
-    minos_reason = fit_failure_from_minos(result.minos_core_fraction, true);
-    if (minos_reason != FitFailureReason::None) {
-        result.failure_reason = minos_reason;
-        return result;
-    }
-    if (core_fraction + fraction_error.Lower() <= 0.0) {
-        result.failure_reason = FitFailureReason::MinosLowerLimit;
-        return result;
-    }
-    if (core_fraction + fraction_error.Upper() >= 1.0) {
-        result.failure_reason = FitFailureReason::MinosUpperLimit;
-        return result;
-    }
-
-    try {
-        result.core_radius = physical_radius_estimate(log_core, core_error);
-        result.tail_radius = physical_radius_estimate(log_tail, tail_error);
-        result.core_fraction = direct_parameter_estimate(
-            core_fraction,
-            fraction_error
+        auto polished = run_mixed_migrad(
+            selected_objective,
+            basin_core_radius,
+            basin_tail_radius,
+            basin_core_fraction
         );
-        result.fitted_pdf = probabilities_to_pdf(probabilities, binning);
-    } catch (const std::exception&) {
-        result.core_radius = std::nullopt;
-        result.tail_radius = std::nullopt;
-        result.core_fraction = std::nullopt;
-        result.fitted_pdf.clear();
-        result.failure_reason = FitFailureReason::NonFiniteMinimum;
-        return result;
-    }
+        candidate.selected_migrad = polished.second;
+        candidate.q_min = candidate.selected_migrad.q_min;
+        const FitFailureReason polishing_reason =
+            fit_failure_from_migrad(candidate.selected_migrad);
+        if (polishing_reason != FitFailureReason::None) {
+            candidate.failure_reason = polishing_reason;
+            return candidate;
+        }
 
-    result.fully_valid = true;
-    result.failure_reason = FitFailureReason::None;
-    return result;
+        FunctionMinimum& selected = polished.first;
+        const double log_core = selected.UserState().Value(0U);
+        const double log_tail = selected.UserState().Value(1U);
+        const double core_fraction = selected.UserState().Value(2U);
+        const double core_radius = std::exp(log_core);
+        const double tail_radius = std::exp(log_tail);
+        if (!std::isfinite(log_core) || !std::isfinite(log_tail) ||
+            !std::isfinite(core_radius) || !std::isfinite(tail_radius) ||
+            !std::isfinite(core_fraction) || core_radius <= 0.0 ||
+            tail_radius <= 0.0 || !candidate.q_min.has_value()) {
+            candidate.failure_reason = FitFailureReason::NonFiniteMinimum;
+            return candidate;
+        }
+        const FitFailureReason fraction_reason =
+            mixed_core_fraction_failure(core_fraction);
+        if (fraction_reason != FitFailureReason::None) {
+            candidate.failure_reason = fraction_reason;
+            return candidate;
+        }
+
+        std::vector<double> probabilities;
+        try {
+            probabilities = mixed_bin_probabilities(
+                family,
+                binning,
+                region,
+                core_radius,
+                tail_radius,
+                core_fraction
+            );
+        } catch (const std::exception&) {
+            candidate.failure_reason = FitFailureReason::ObjectiveEvaluation;
+            return candidate;
+        }
+
+        MnMinos minos(selected_objective, selected);
+        const MinosError core_error = minos.Minos(0U);
+        candidate.minos_core_radius = minos_diagnostic(core_error);
+        FitFailureReason minos_reason = fit_failure_from_minos(
+            candidate.minos_core_radius,
+            false
+        );
+        if (minos_reason != FitFailureReason::None) {
+            candidate.failure_reason = minos_reason;
+            return candidate;
+        }
+
+        const MinosError tail_error = minos.Minos(1U);
+        candidate.minos_tail_radius = minos_diagnostic(tail_error);
+        minos_reason = fit_failure_from_minos(
+            candidate.minos_tail_radius,
+            false
+        );
+        if (minos_reason != FitFailureReason::None) {
+            candidate.failure_reason = minos_reason;
+            return candidate;
+        }
+
+        const MinosError fraction_error = minos.Minos(2U);
+        candidate.minos_core_fraction = minos_diagnostic(fraction_error);
+        minos_reason = fit_failure_from_minos(
+            candidate.minos_core_fraction,
+            true
+        );
+        if (minos_reason != FitFailureReason::None) {
+            candidate.failure_reason = minos_reason;
+            return candidate;
+        }
+        if (core_fraction + fraction_error.Lower() <= 0.0) {
+            candidate.failure_reason = FitFailureReason::MinosLowerLimit;
+            return candidate;
+        }
+        if (core_fraction + fraction_error.Upper() >= 1.0) {
+            candidate.failure_reason = FitFailureReason::MinosUpperLimit;
+            return candidate;
+        }
+
+        try {
+            candidate.core_radius = physical_radius_estimate(
+                log_core,
+                core_error
+            );
+            candidate.tail_radius = physical_radius_estimate(
+                log_tail,
+                tail_error
+            );
+            candidate.core_fraction = direct_parameter_estimate(
+                core_fraction,
+                fraction_error
+            );
+            candidate.fitted_pdf = probabilities_to_pdf(
+                probabilities,
+                binning
+            );
+        } catch (const std::exception&) {
+            candidate.core_radius = std::nullopt;
+            candidate.tail_radius = std::nullopt;
+            candidate.core_fraction = std::nullopt;
+            candidate.fitted_pdf.clear();
+            candidate.failure_reason = FitFailureReason::NonFiniteMinimum;
+            return candidate;
+        }
+
+        candidate.fully_valid = true;
+        candidate.failure_reason = FitFailureReason::None;
+        return candidate;
+    };
+
+    // Preserve the historical lowest-q endpoint failure as the primary
+    // diagnostic if every endpoint in the winning basin fails. If a later
+    // endpoint succeeds, its start index and polished diagnostics are the ones
+    // published in the result.
+    std::optional<MixedFitResult> primary_failure;
+    for (const std::size_t candidate_start : candidate_order) {
+        MixedFitResult candidate = evaluate_candidate(candidate_start);
+        if (!primary_failure.has_value()) {
+            primary_failure = candidate;
+        }
+        if (candidate.fully_valid) {
+            return candidate;
+        }
+    }
+    return primary_failure.value();
 }
 
 }  // namespace hbt

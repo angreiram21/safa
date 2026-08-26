@@ -222,30 +222,49 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
 );
 
 /**
- * @brief Select the mixed start from the largest origin-admissible basin.
+ * @brief Rank starts inside the selected origin-admissible mixed basin.
  * @param endpoints Final endpoint for every attempted deterministic start.
  * @param q_values Objective value associated with every attempted start.
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
  * @param core_fraction_policy Origin-dependent f_core admissibility policy.
- * @return Selected start index, or std::nullopt when every numerical basin is
+ * @return Start indices from the selected basin ordered by increasing q and
+ *         then by increasing start index. An empty vector means every basin is
  *         physically degenerate.
  * @throws std::invalid_argument If array sizes differ, no valid start is
  *         supplied, or a valid q is non-finite.
  * @throws std::out_of_range If a valid start index is outside the input arrays.
  *
  * Valid endpoints are partitioned into connected numerical basins using
- * same_mixed_basin(). Basin admissibility is determined first from the
- * arithmetic mean f_core. PRD retains the strict interval
- * 0.1 < mean(f_core) < 0.9. P and PR use
- * 0.1 < mean(f_core) < 0.99, rejecting the near-pure-Gaussian degeneracy.
+ * same_mixed_basin(). Basin admissibility is determined from the arithmetic
+ * mean f_core: PRD requires 0.1 < mean(f_core) < 0.9, while P and PR require
+ * 0.1 < mean(f_core) < 0.99. Among admissible basins, the largest connected
+ * component wins; equal-size basins are ranked by their smallest q and then by
+ * their lowest start index. Only after that basin is fixed are its member
+ * starts ordered by q for same-basin post-selection fallback.
+ */
+[[nodiscard]] std::vector<std::size_t> rank_mixed_starts_in_selected_basin(
+    const std::vector<MixedBasinPoint>& endpoints,
+    const std::vector<double>& q_values,
+    const std::vector<std::size_t>& valid_indices,
+    MixedCoreFractionPolicy core_fraction_policy
+);
+
+/**
+ * @brief Select the lowest-q start from the largest admissible mixed basin.
+ * @param endpoints Final endpoint for every attempted deterministic start.
+ * @param q_values Objective value associated with every attempted start.
+ * @param valid_indices Start indices whose MIGRAD states are numerically valid.
+ * @param core_fraction_policy Origin-dependent f_core admissibility policy.
+ * @return Lowest-q start index in the selected basin, or std::nullopt when
+ *         every numerical basin is physically degenerate.
+ * @throws std::invalid_argument If array sizes differ, no valid start is
+ *         supplied, or a valid q is non-finite.
+ * @throws std::out_of_range If a valid start index is outside the input arrays.
  *
- * Among admissible basins, every origin selects the basin reached by the
- * largest number of converged deterministic starts. Equal-size basins are
- * ranked by their smallest finite q, then by the lowest start index. q is
- * never divided or otherwise normalized by basin multiplicity. Once the basin
- * is fixed, the lowest-q start in that basin is selected. R_HM remains part of
- * the deterministic seed set but does not rank final basins. No ordering
- * between R_core and R_tail is imposed.
+ * This compatibility helper returns the first entry produced by
+ * rank_mixed_starts_in_selected_basin(). The mixed fitter uses the complete
+ * ranked vector so that a failed polished MIGRAD/MINOS evaluation can retry a
+ * different endpoint without changing the already-selected basin.
  */
 [[nodiscard]] std::optional<std::size_t> select_mixed_start_by_largest_basin(
     const std::vector<MixedBasinPoint>& endpoints,
@@ -340,12 +359,15 @@ struct GaussianFitResult {
  * endpoints are grouped into numerical basins. After the origin-specific
  * strict f_core admissibility filter, the basin reached by the largest number
  * of converged deterministic starts is selected. Equal-size basins are ranked
- * by their smallest q and then by lowest start index. The valid minimum with
- * the smallest q inside the selected basin supplies the physical coordinates
- * for one final fresh MIGRAD pass. MINOS is launched from that polished
- * minimum rather than from the retained internal state of an individual grid
- * start. `consensus_size` records the selected basin multiplicity and is not an
- * independent acceptance veto. R_HM remains a deterministic seed only.
+ * by their smallest q and then by lowest start index. Once the basin is fixed,
+ * its endpoints are tried in increasing terminal q. Each endpoint supplies the
+ * coordinates for a fresh MIGRAD pass followed by MINOS. The first endpoint
+ * whose polished MIGRAD and complete MINOS result are publishable is retained;
+ * failures fall back only to another endpoint of the same selected basin and
+ * never trigger a basin change. If every endpoint fails, the original lowest-q
+ * endpoint remains the primary failure diagnostic. `consensus_size` records
+ * the selected basin multiplicity and is not an independent acceptance veto.
+ * R_HM remains a deterministic seed only.
  */
 struct MixedFitResult {
     /** Number of deterministic Cartesian-product mixed MIGRAD starts. */
@@ -361,9 +383,11 @@ struct MixedFitResult {
     std::size_t starts_attempted;      ///< Number of starts actually run.
     std::size_t valid_starts;          ///< Starts with valid evaluable MIGRAD state.
     std::size_t consensus_size;        ///< Same-basin multiplicity of selected minimum.
-    /// Zero-based lowest-q start inside the selected largest basin.
+    /// Zero-based accepted fallback endpoint in the selected largest basin;
+    /// the lowest-q endpoint remains here when every fallback attempt fails.
     std::optional<std::size_t> selected_core_start;
-    MigradDiagnostic selected_migrad;  ///< Final post-selection MIGRAD diagnostic used by MINOS.
+    /// Final post-selection MIGRAD diagnostic associated with the published endpoint.
+    MigradDiagnostic selected_migrad;
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.

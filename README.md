@@ -962,11 +962,14 @@ policy, the mixed fit is invalidated with `degenerate_core_fraction`.
 Among the non-degenerate basins, the basin reached by the largest number of the
 36 deterministic starts is selected. If two basins have the same multiplicity,
 the basin with the smallest objective value wins; a remaining exact tie is
-broken by the lowest start index. Within the selected basin, the valid minimum
-with the smallest objective value supplies the starting coordinates for one
-fresh final MIGRAD pass. MINOS is then run from this polished Minuit state,
-removing dependence on the covariance/history retained by a particular grid
-start. This final pass does not participate in basin selection. `R_HM` remains
+broken by the lowest start index. Within the selected basin, valid endpoints are ordered by increasing objective
+value. Each endpoint supplies starting coordinates for a fresh final MIGRAD pass
+followed by MINOS. If that polished MIGRAD or any required MINOS side fails, the
+fitter retries the next endpoint from the same already-selected basin. The first
+fully valid endpoint is published; the fallback never changes basins. If every
+endpoint in the basin fails, the original lowest-q endpoint remains the primary
+failure diagnostic. These final passes do not participate in basin selection.
+`R_HM` remains
 part of the deterministic `R_core` seed set but no longer ranks final basins. No ordering
 between `R_core` and `R_tail` is imposed. For diagnostic studies, the terminal
 physical `R_core`, `R_tail`, and `f_core` coordinates of every one of the 36

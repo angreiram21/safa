@@ -90,7 +90,7 @@ std::vector<std::size_t> largest_mixed_basin_group(
     return best;
 }
 
-std::optional<std::size_t> select_mixed_start_by_largest_basin(
+std::vector<std::size_t> rank_mixed_starts_in_selected_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
     const std::vector<std::size_t>& valid_indices,
@@ -178,19 +178,41 @@ std::optional<std::size_t> select_mixed_start_by_largest_basin(
     }
 
     if (!selected_component.has_value()) {
-        return std::nullopt;
+        return {};
     }
 
-    const auto& basin = components[selected_component.value()];
-    std::size_t selected_start = basin.front();
-    for (const std::size_t index : basin) {
-        if (q_values[index] < q_values[selected_start] ||
-            (q_values[index] == q_values[selected_start] &&
-             index < selected_start)) {
-            selected_start = index;
+    std::vector<std::size_t> ranked =
+        components[selected_component.value()];
+    std::sort(
+        ranked.begin(),
+        ranked.end(),
+        [&q_values](std::size_t lhs, std::size_t rhs) {
+            if (q_values[lhs] != q_values[rhs]) {
+                return q_values[lhs] < q_values[rhs];
+            }
+            return lhs < rhs;
         }
+    );
+    return ranked;
+}
+
+std::optional<std::size_t> select_mixed_start_by_largest_basin(
+    const std::vector<MixedBasinPoint>& endpoints,
+    const std::vector<double>& q_values,
+    const std::vector<std::size_t>& valid_indices,
+    MixedCoreFractionPolicy core_fraction_policy
+) {
+    const std::vector<std::size_t> ranked =
+        rank_mixed_starts_in_selected_basin(
+            endpoints,
+            q_values,
+            valid_indices,
+            core_fraction_policy
+        );
+    if (ranked.empty()) {
+        return std::nullopt;
     }
-    return selected_start;
+    return ranked.front();
 }
 
 FitFailureReason fit_failure_from_migrad(

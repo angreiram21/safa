@@ -73,10 +73,13 @@ namespace hbt {
  * 0.1 < mean(f_core) < 0.99 to reject the near-pure-Gaussian degeneracy. Among
  * the remaining basins, every origin selects the basin reached by the largest
  * number of converged deterministic starts. Equal-size basins are ranked by
- * their smallest q and then by lowest start index. The smallest-q start inside
- * the selected basin supplies the coordinates for one fresh post-selection
- * MIGRAD pass, and MINOS is run from that polished Minuit state. The polishing
- * pass does not participate in basin selection. R_HM remains in the
+ * their smallest q and then by lowest start index. Once the basin is fixed,
+ * its endpoints are ordered by increasing terminal q. Each endpoint supplies
+ * coordinates for a fresh post-selection MIGRAD pass followed by MINOS. The
+ * first fully publishable result is accepted; a MIGRAD or MINOS failure retries
+ * the next endpoint only within that same basin. If all endpoints fail, the
+ * lowest-q endpoint remains the primary failure diagnostic. These fallback
+ * passes do not participate in basin selection. R_HM remains in the
  * deterministic core-seed set but does not rank final basins. If every basin is degenerate, the mixed
  * fit is invalidated with DegenerateCoreFraction.
  * The terminal physical R_core, R_tail and f_core coordinates of every start
