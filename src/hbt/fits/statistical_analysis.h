@@ -152,8 +152,12 @@ namespace hbt {
  * @throws std::out_of_range If the region lies outside raw storage.
  * @throws std::overflow_error If re-summing selected counts overflows.
  *
- * The population variance is evaluated exactly from weighted bin centers. A
- * negative or non-finite variance is reported and is never clamped to zero.
+ * The population variance is evaluated exactly from weighted bin centers.
+ * For N_selected > 1, the statistical uncertainty of the weighted mean is
+ * sigma / sqrt(N_selected), while the sigma uncertainty is
+ * sigma / sqrt(2 * (N_selected - 1)). Here N_selected is the number of
+ * selected pairs, not the number of processed events. A negative or
+ * non-finite variance is reported and is never clamped to zero.
  */
 [[nodiscard]] DeltaTHistogramResult calculate_delta_t_statistics(
     const std::vector<std::uint64_t>& bins,

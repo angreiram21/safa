@@ -369,6 +369,8 @@ bool verify_analysis_and_output() {
     const std::string delta_statistics =
         read_text(lab_delta_t / "statistics.csv");
     if (delta_statistics.find("valid") == std::string::npos ||
+        delta_statistics.find("mean_dt") == std::string::npos ||
+        delta_statistics.find("error_mean_dt") == std::string::npos ||
         delta_statistics.find("sigma_dt") == std::string::npos ||
         delta_statistics.find("error_sigma_dt") == std::string::npos) {
         std::filesystem::remove_all(root);

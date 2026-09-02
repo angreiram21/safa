@@ -904,6 +904,7 @@ DeltaTHistogramResult calculate_delta_t_statistics(
         DeltaTStatisticsStatus::Valid,
         mean,
         std::nullopt,
+        std::nullopt,
         std::nullopt
     };
 
@@ -922,10 +923,12 @@ DeltaTHistogramResult calculate_delta_t_statistics(
         return result;
     }
 
+    const double mean_error = sigma /
+        std::sqrt(static_cast<double>(region.selected_count));
     const double sigma_error = sigma /
         std::sqrt(2.0 * static_cast<double>(region.selected_count - 1U));
-    if (!std::isfinite(mean) || !std::isfinite(sigma) ||
-        !std::isfinite(sigma_error)) {
+    if (!std::isfinite(mean) || !std::isfinite(mean_error) ||
+        !std::isfinite(sigma) || !std::isfinite(sigma_error)) {
         result.status = DeltaTStatisticsStatus::InvalidVariance;
         result.mean = std::isfinite(mean)
             ? std::optional<double>{mean}
@@ -936,6 +939,7 @@ DeltaTHistogramResult calculate_delta_t_statistics(
         return result;
     }
 
+    result.mean_error = mean_error;
     result.sigma_error = sigma_error;
     return result;
 }

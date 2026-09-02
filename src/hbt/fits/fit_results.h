@@ -432,9 +432,9 @@ struct ShapeHistogramResult {
  * @brief Diagnostic state for signed delta-t moment calculation.
  */
 enum class DeltaTStatisticsStatus {
-    Valid,             ///< Mean, sigma, and sigma error are valid.
+    Valid,             ///< Mean and sigma, with their errors, are valid.
     EmptyHistogram,    ///< No selected contiguous region exists.
-    InsufficientCount, ///< N <= 1 prevents the required sigma error.
+    InsufficientCount, ///< N <= 1 prevents the required uncertainty set.
     InvalidVariance    ///< Computed variance is negative or non-finite.
 };
 
@@ -443,15 +443,19 @@ enum class DeltaTStatisticsStatus {
  */
 struct DeltaTHistogramResult {
     std::optional<StatisticalRegion> region; ///< Selected peak-centered region.
-    std::uint64_t selected_count;            ///< N over the selected region.
+    /// Number of selected pairs, N_selected, over the signed delta-t region.
+    std::uint64_t selected_count;
     /// Final normalized distribution, produced after moment calculation.
     std::vector<NormalizedHistogramBin> normalized_bins;
     /// Explicit moment validity state.
     DeltaTStatisticsStatus status;
-    std::optional<double> mean;               ///< Weighted mean when defined.
-    /// Population sigma when defined.
+    /// Weighted mean of selected signed delta-t bin centers.
+    std::optional<double> mean;
+    /// Statistical error of the mean, sigma / sqrt(N_selected), when valid.
+    std::optional<double> mean_error;
+    /// Population sigma of selected signed delta-t bin centers.
     std::optional<double> sigma;
-    /// Required sigma error when valid.
+    /// Statistical sigma error, sigma / sqrt(2 * (N_selected - 1)), when valid.
     std::optional<double> sigma_error;
 };
 

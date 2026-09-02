@@ -912,7 +912,7 @@ void write_delta_t_result(
     );
     statistics
         << "product_index,origin,scope,slice_index,frame,family,observable,"
-        << "status,N_selected,mean_dt,sigma_dt,error_sigma_dt\n";
+        << "status,N_selected,mean_dt,error_mean_dt,sigma_dt,error_sigma_dt\n";
     write_identity_fields(
         statistics,
         product_index,
@@ -923,6 +923,8 @@ void write_delta_t_result(
     statistics << ',' << hbt::delta_t_status_token(result.status)
                << ',' << result.selected_count << ',';
     write_optional_double(statistics, result.mean);
+    statistics << ',';
+    write_optional_double(statistics, result.mean_error);
     statistics << ',';
     write_optional_double(statistics, result.sigma);
     statistics << ',';

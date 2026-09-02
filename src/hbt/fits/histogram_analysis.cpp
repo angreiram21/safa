@@ -527,6 +527,7 @@ DeltaTHistogramResult analyze_delta_t_histogram(
             DeltaTStatisticsStatus::EmptyHistogram,
             std::nullopt,
             std::nullopt,
+            std::nullopt,
             std::nullopt
         };
     }
@@ -770,8 +771,8 @@ void require_delta_t_result(const DeltaTHistogramResult& result) {
         );
     }
     if (result.status == DeltaTStatisticsStatus::Valid &&
-        (!result.mean.has_value() || !result.sigma.has_value() ||
-         !result.sigma_error.has_value())) {
+        (!result.mean.has_value() || !result.mean_error.has_value() ||
+         !result.sigma.has_value() || !result.sigma_error.has_value())) {
         throw std::logic_error(
             "HBT analysis state: valid delta_t statistics are incomplete"
         );

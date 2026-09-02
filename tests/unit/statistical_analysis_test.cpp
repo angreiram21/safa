@@ -596,7 +596,7 @@ bool verify_normalization() {
 
 /**
  * @brief Verify delta-t moments use raw counts and selected bin centers.
- * @return true when mean, sigma, and required sigma error are exact.
+ * @return true when mean, mean error, sigma, and sigma error are exact.
  */
 bool verify_delta_t_statistics() {
     const hbt::HistogramBinningConfig binning{8U, -4.0, 4.0, 1.0};
@@ -608,13 +608,15 @@ bool verify_delta_t_statistics() {
     const double mean = 1.5 / 17.0;
     const double second_moment = 14.25 / 17.0;
     const double sigma = std::sqrt(second_moment - mean * mean);
-    const double error = sigma / std::sqrt(32.0);
+    const double mean_error = sigma / std::sqrt(17.0);
+    const double sigma_error = sigma / std::sqrt(32.0);
     if (result.status != hbt::DeltaTStatisticsStatus::Valid ||
-        !result.mean.has_value() || !result.sigma.has_value() ||
-        !result.sigma_error.has_value() ||
+        !result.mean.has_value() || !result.mean_error.has_value() ||
+        !result.sigma.has_value() || !result.sigma_error.has_value() ||
         !close(result.mean.value(), mean) ||
+        !close(result.mean_error.value(), mean_error) ||
         !close(result.sigma.value(), sigma) ||
-        !close(result.sigma_error.value(), error)) {
+        !close(result.sigma_error.value(), sigma_error)) {
         return fail("delta-t raw-count moments differ from the contract");
     }
     return true;
@@ -636,14 +638,15 @@ bool verify_invalid_delta_t_variance() {
     const hbt::DeltaTHistogramResult result =
         hbt::calculate_delta_t_statistics(bins, 0U, binning, region);
     if (result.status != hbt::DeltaTStatisticsStatus::InvalidVariance ||
-        result.sigma.has_value() || result.sigma_error.has_value()) {
+        result.mean_error.has_value() || result.sigma.has_value() ||
+        result.sigma_error.has_value()) {
         return fail("invalid delta-t variance was hidden or clamped");
     }
     return true;
 }
 
 /**
- * @brief Verify N <= 1 is reported instead of inventing a sigma error.
+ * @brief Verify N <= 1 is reported instead of inventing uncertainties.
  * @return true when the explicit insufficient-count state is preserved.
  */
 bool verify_insufficient_delta_t_count() {
@@ -653,8 +656,8 @@ bool verify_insufficient_delta_t_count() {
     const hbt::DeltaTHistogramResult result =
         hbt::calculate_delta_t_statistics(bins, 0U, binning, region);
     if (result.status != hbt::DeltaTStatisticsStatus::InsufficientCount ||
-        !result.mean.has_value() || !result.sigma.has_value() ||
-        result.sigma_error.has_value()) {
+        !result.mean.has_value() || result.mean_error.has_value() ||
+        !result.sigma.has_value() || result.sigma_error.has_value()) {
         return fail("N <= 1 did not remain an explicit invalid error state");
     }
     return true;

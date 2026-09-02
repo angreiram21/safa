@@ -1,4 +1,4 @@
-# SMASH Afterburner Analysis — Modular
+# SMASH Afterburner Femtoscopy Analysis
 
 Modular C++17 rewrite of the HBT/femtoscopy analysis that consumes SMASH
 Afterburner output, prepares validated particles and traverses physical pairs
@@ -988,10 +988,12 @@ parameter estimates or fit curves.
 ### Signed delta-t statistics
 
 Signed `delta_t` does not use Minuit2. The selected raw counts define a weighted
-bin-center mean, population sigma and
-`sigma_error = sigma / sqrt(2 * (N_selected - 1))` when `N_selected > 1`.
-Negative or non-finite computed variance is reported explicitly; it is not
-clamped or repaired.
+bin-center mean and population sigma. For `N_selected > 1`, the statistical
+uncertainties are `mean_error = sigma / sqrt(N_selected)` and
+`sigma_error = sigma / sqrt(2 * (N_selected - 1))`. Here `N_selected` is the
+number of selected pairs accumulated in the final delta-t histogram, not the
+number of processed events. Negative or non-finite computed variance is
+reported explicitly; it is not clamped or repaired.
 
 ## Single-particle kinematics
 
@@ -1308,8 +1310,8 @@ errors, objective minima, covariance state, all 36 mixed-start diagnostics,
 the terminal `R_core`, `R_tail`, and `f_core` coordinates for every mixed start,
 and the selected-minimum basin multiplicity diagnostic.
 Delta-t directories contain
-`statistics.csv` with status, `N_selected`, mean, sigma and sigma error and,
-when a region exists, `distribution.csv`.
+`statistics.csv` with status, `N_selected`, mean, mean error, sigma and sigma
+error and, when a region exists, `distribution.csv`.
 
 The production writer consumes the already-derived Phase-7 state and performs no
 scientific recalculation. Its output root must be absent or empty.

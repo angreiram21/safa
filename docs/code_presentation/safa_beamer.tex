@@ -1,0 +1,1581 @@
+\documentclass{beamer}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usetikzlibrary{positioning,arrows.meta}
+
+\title{SAFA}
+\subtitle{SMASH Afterburner Femtoscopy Analysis}
+\author{Ángel Reina Ramírez}
+\date{}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+
+\begin{frame}{1. Configuration}
+
+\begin{columns}[T]
+
+\begin{column}{0.48\textwidth}
+\textbf{\texttt{main.yaml} --- Run configuration}
+
+\begin{itemize}
+    \item Input and output paths
+    \item Number of events and subevents
+    \item Number of threads
+    \item Enable/disable HBT
+    \item Path to the HBT configuration
+\end{itemize}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{\texttt{hbt.yaml} --- HBT analysis configuration}
+
+\begin{itemize}
+    \item Analysis products / particle-pair channels
+    \item Particle acceptance cuts
+    \item $k_T$ and $m_T$ slicing
+    \item Histogram binning
+    \item Origin selections
+    \item Fit estimator(s)
+\end{itemize}
+\end{column}
+
+\end{columns}
+
+\vfill
+
+\[
+\begin{aligned}
+\texttt{main.yaml} &\longrightarrow \texttt{hbt.yaml} \\
+& \downarrow \\
+& \boxed{\text{Required channels}}
+\longrightarrow
+\boxed{\text{Required particle species}}
+\end{aligned}
+\]
+
+\end{frame}
+
+\begin{frame}[fragile]{\texttt{main.yaml}}
+\footnotesize
+\begin{verbatim}
+events_path: "../../"
+output_path: "../output"
+number_of_events: 1
+number_of_subevents: 2000
+threads: 1
+hbt_enabled: true
+hbt_config_path: "hbt.yaml"
+\end{verbatim}
+\end{frame}
+
+\begin{frame}[fragile]{\texttt{hbt.yaml} --- Channels \& Particle Acceptance}
+\vspace{-0.5em}
+\fontsize{5.7}{6.2}\selectfont
+\begin{verbatim}
+hbt_enabled_channels: >-
+  pi_plus_pi_plus+pi_minus_pi_minus,
+  p_p+p_bar_p_bar,
+  pi_plus_p+pi_minus_p_bar,
+  k_plus_p+k_minus_p_bar,
+  k_plus_k_plus+k_minus_k_minus
+
+hbt_particle_acceptance:
+  # Allowed values:
+  # - rapidity: apply the longitudinal cut to |y|
+  # - pseudorapidity: apply the longitudinal cut to |eta|
+  longitudinal_variable: "pseudorapidity"
+
+  groups:
+    pions:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.14
+      pt_max_gev: 4.0
+
+    kaons:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.4
+      pt_max_gev: 1.4
+
+    nucleons:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.5
+      pt_max_gev: 4.05
+
+    sigmas:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 1.0
+      pt_max_gev: 10000.0
+
+    lambdas:
+      longitudinal_abs_max: 0.8
+      pt_min_gev: 0.3
+      pt_max_gev: 10000.0
+
+\end{verbatim}
+\end{frame}
+
+\begin{frame}[fragile]{\texttt{hbt.yaml} --- Pair Slicing \& Histograms}
+\vspace{-0.5em}
+\fontsize{5.2}{5.6}\selectfont
+\begin{verbatim}
+# Pair-level slicing. Each enabled axis requires at least two consecutive
+# bin edges in GeV. Disabled axes may retain validated production binning.
+# Slices use half-open intervals [edge_i, edge_(i+1)).
+hbt_pair_slicing:
+  kt:
+    enabled: false
+
+  mt:
+    enabled: true
+    bin_edges_gev:
+      - 0.50
+      - 0.70
+      - 0.90
+      - 1.10
+      - 1.30
+      - 1.50
+      - 1.70
+      - 1.90
+      - 2.10
+      - 2.30
+      - 2.50
+      - 2.70
+
+# Raw source histograms. These bins are independent of kT/mT slicing.
+# OSL components and radial source radii are histogrammed from zero.
+# Relative times retain their sign and therefore span zero.
+hbt_histograms:
+  osl:
+    nbins: 3000
+    min_fm: 0.0
+    max_fm: 300.0
+
+  radial:
+    nbins: 3000
+    min_fm: 0.0
+    max_fm: 300.0
+
+  delta_t:
+    nbins: 6000
+    min_fm_c: -300.0
+    max_fm_c: 300.0
+
+\end{verbatim}
+\end{frame}
+
+\begin{frame}[fragile]{\texttt{hbt.yaml} --- Origin Selection \& Fit Estimator}
+\vspace{-0.5em}
+\scriptsize
+\begin{verbatim}
+# Allowed values:
+# - primordial
+# - primordial_rescattering
+# - primordial_rescattering_decay
+# - all: request all three nested origin selections in the same run
+hbt_origin_mode: "all"
+
+# Statistical estimator used for pure-Gaussian and mixed fits.
+# Allowed values:
+# - poisson
+# - neyman
+# - pearson
+# - all: execute all three estimators independently
+hbt_fit_estimator: "all"
+\end{verbatim}
+\end{frame}
+
+
+\begin{frame}{2. Event Reading}
+\small
+
+\begin{center}
+\scriptsize
+\texttt{events\_path/<event>/\{Sampler, Afterburner\}/particle\_lists.oscar}
+\end{center}
+
+\vspace{-0.2em}
+\begin{center}
+\textbf{Outer event}
+\end{center}
+\vspace{-0.7em}
+
+\begin{columns}[T]
+
+\begin{column}{0.47\textwidth}
+\begin{block}{Sampler}
+\begin{center}
+Load complete file
+
+$\downarrow$
+
+Validate structure
+
+$\downarrow$
+
+Build position index
+
+$\downarrow$
+
+\scriptsize
+$(\text{subevent ID},\,\text{particle ID},\,\text{PDG})\rightarrow x^\mu$
+\end{center}
+\end{block}
+\end{column}
+
+\begin{column}{0.47\textwidth}
+\begin{block}{Afterburner}
+\begin{center}
+Stream subevents
+
+$\downarrow$
+
+Read subevent header
+
+$\downarrow$
+
+Read $N$ particles
+
+$\downarrow$
+
+Validate subevent end
+\end{center}
+\end{block}
+\end{column}
+
+\end{columns}
+
+\vspace{-0.6em}
+\begin{center}
+$\searrow\hspace{11em}\swarrow$\\[-0.2em]
+\textbf{Event processing}
+\end{center}
+
+\vspace{-0.4em}
+\scriptsize
+\textbf{Matching requirement:} The subevent ID is essential for matching: particle ID and PDG alone are not sufficient to uniquely associate an Afterburner particle with its Sampler emission point.
+
+\medskip
+\textbf{Input consistency:} Sampler must contain the configured number of subevents, and Afterburner must contain exactly that number --- neither fewer nor more.
+
+\medskip
+\alert{\textbf{Input failure:} An input failure at this level causes the \textbf{whole outer event to be discarded}.}
+
+\end{frame}
+
+
+\begin{frame}{3. Particle Preparation and Selection}
+\scriptsize
+
+\begin{columns}[T]
+
+\begin{column}{0.44\textwidth}
+\begin{block}{Selection flow}
+\begin{center}
+Raw Afterburner particle
+
+$\downarrow$
+
+Identify species
+
+$\downarrow$
+
+Is the species required? \hfill \textbf{No} $\rightarrow$ Reject
+
+$\downarrow$ \textbf{Yes}
+
+Numerical validity + acceptance cuts
+
+$\downarrow$
+
+Classify origin
+
+$\downarrow$
+
+Is origin requested? \hfill \textbf{No} $\rightarrow$ Reject
+
+$\downarrow$ \textbf{Yes}
+
+Validate invariant mass
+
+$\downarrow$
+
+Emission-point resolution
+\end{center}
+\end{block}
+\end{column}
+
+\begin{column}{0.52\textwidth}
+\textbf{Configured acceptance cuts}
+
+\medskip
+{\fontsize{6.5}{7.2}\selectfont
+\begin{tabular}{lcc}
+\textbf{Species} & \textbf{Longitudinal} & \textbf{$p_T$ [GeV]} \\
+\hline
+Pions     & $|\eta|<0.8$ & $0.14<p_T<4.0$ \\
+Kaons     & $|\eta|<0.8$ & $0.40<p_T<1.4$ \\
+Nucleons  & $|\eta|<0.8$ & $0.50<p_T<4.05$ \\
+Sigmas    & $|\eta|<0.8$ & $1.00<p_T<10000$ \\
+Lambdas   & $|\eta|<0.8$ & $0.30<p_T<10000$ \\
+\end{tabular}}
+
+\medskip
+The acceptance cuts are open:
+\[
+|\eta|<\eta_{\max},
+\qquad
+p_{T,\min}<p_T<p_{T,\max}.
+\]
+
+\begin{alertblock}{Important distinction}
+Physical cut rejection and numerical rejection are treated separately.
+\end{alertblock}
+
+Examples of numerical rejection include non-finite momentum, $E\leq0$, or an invalid pseudorapidity calculation.
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+
+\begin{frame}{3. Emission Point Resolution}
+\scriptsize
+
+\begin{center}
+\textbf{Accepted candidate}
+\end{center}
+\vspace{-0.6em}
+
+\begin{columns}[T]
+
+\begin{column}{0.47\textwidth}
+\begin{block}{Primordial and $n_{\mathrm{coll}}=0$}
+\begin{center}
+Sampler position is \textbf{mandatory}
+
+$\downarrow$
+
+Match using
+
+\[
+(\text{subevent ID},\,\text{particle ID},\,\text{PDG})
+\]
+
+$\downarrow$
+
+Use Sampler emission point
+\end{center}
+\end{block}
+\end{column}
+
+\begin{column}{0.47\textwidth}
+\begin{block}{Otherwise}
+\begin{center}
+Is \texttt{time\_last\_coll} usable?
+\end{center}
+\vspace{0.2em}
+
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{Yes}
+
+$\downarrow$
+
+Propagate backwards\\
+to last interaction
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\textbf{No}
+
+$\downarrow$
+
+Use final\\
+Afterburner position
+\end{column}
+\end{columns}
+\end{block}
+\end{column}
+
+\end{columns}
+
+\vspace{-0.2em}
+\begin{center}
+\boxed{\text{Sampler}}
+\qquad
+\boxed{\text{Propagation}}
+\qquad
+\boxed{\text{Afterburner}}
+\end{center}
+
+\vspace{-0.2em}
+\begin{alertblock}{Mandatory Sampler match}
+For a primordial particle with $n_{\mathrm{coll}}=0$, the Sampler match is mandatory. If the required match cannot be found, SAFA raises a recoverable subevent failure and the \textbf{subevent is discarded}.
+\end{alertblock}
+
+\end{frame}
+
+
+\begin{frame}{4. Accepted Particles and Pair Construction}
+\fontsize{7.1}{8.0}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.43\textwidth}
+\begin{block}{Pair-construction flow}
+\begin{center}
+Accepted particles of one valid subevent\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Deterministic shuffle\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Group particles by species\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Loop over required primitive channels\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Construct physical pairs\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Pair processed once
+\end{center}
+\end{block}
+
+\vspace{-0.25em}
+\begin{alertblock}{Why shuffle?}
+SMASH input ordering may contain non-physical correlations. The shuffle removes ordering effects while preserving reproducibility.
+
+\smallskip
+Seed: $(\text{outer event number},\,\text{subevent ID})$
+\end{alertblock}
+\end{column}
+
+\begin{column}{0.53\textwidth}
+\textbf{Identical species}
+
+Examples: $p$--$p$, $\pi^+$--$\pi^+$
+
+\vspace{-0.35em}
+\[
+i<j
+\qquad\Longrightarrow\qquad
+N_{\mathrm{pairs}}=\frac{N(N-1)}{2}
+\]
+\vspace{-0.45em}
+
+Each unordered physical pair is produced \textbf{exactly once}.
+
+\smallskip
+\textbf{Different species}
+
+Example: $K^-p$
+
+\vspace{-0.35em}
+\[
+A\times B
+\qquad\Longrightarrow\qquad
+N_{\mathrm{pairs}}=N_A N_B
+\]
+\vspace{-0.45em}
+
+The full Cartesian product is generated, preserving the predefined \textbf{species-A/species-B roles} of the channel.
+
+\vspace{0.15em}
+\begin{block}{Processing scope}
+\begin{itemize}
+    \setlength{\itemsep}{0.15em}
+    \item Only primitive channels required by the configured analysis products are processed.
+    \item Pairs are not stored in memory: each pair is passed directly to the next processing stage.
+\end{itemize}
+\end{block}
+
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{4. Pair Reuse: Origins and Analysis Products}
+\fontsize{7.0}{7.7}\selectfont
+
+\begin{center}
+\alert{\textbf{Key design principle:}}
+\textbf{Each physical pair is constructed and processed only once for its primitive channel.}
+\end{center}
+
+\vspace{-0.25em}
+\begin{center}
+\textbf{Physical pair}
+$\;\longrightarrow\;$
+\textbf{Primitive channel}
+$\;\longrightarrow\;$
+\textbf{Observables computed once}
+\end{center}
+
+\vspace{0.05em}
+\begin{columns}[T]
+
+\begin{column}{0.47\textwidth}
+\textcolor{blue}{\Large Origin fan-out}
+
+\smallskip
+The same processed pair can contribute to more than one compatible origin selection.
+
+\smallskip
+With \texttt{origin\_mode: all}, the selections are nested. For example,
+\vspace{-0.25em}
+\[
+P\!\! -\!\! P \;\longrightarrow\; P,\;PR,\;PRD.
+\]
+\vspace{-0.45em}
+
+No pair is reconstructed for the different origin routes.
+\end{column}
+
+\begin{column}{0.47\textwidth}
+\textcolor{blue}{\Large Product fan-out}
+
+\smallskip
+A primitive channel may belong to several configured final analysis products.
+
+\vspace{-0.2em}
+\[
+\text{primitive channel}
+\longrightarrow
+\begin{matrix}
+\text{product 1}\\[-0.15em]
+\text{product 2}\\[-0.15em]
+\vdots
+\end{matrix}
+\]
+\vspace{-0.4em}
+
+The already-computed pair contribution is routed to every product that contains that primitive channel.
+\end{column}
+
+\end{columns}
+
+\vfill
+\begin{center}
+\alert{\textbf{No duplicated pair calculation:}}
+Overlap between origin selections or analysis products only changes \textbf{where the pair contribution is accumulated}; it does not trigger a new pair construction or a new pair-observable calculation.
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}{5. Pair Processing}
+\fontsize{7.2}{8.0}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.43\textwidth}
+\begin{block}{Pair-level flow}
+\begin{center}
+Physical pair\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Compute pair kinematics\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Validate $k_T$ and $m_T$\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Resolve origin route(s)\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Apply $k_T/m_T$ slicing\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Proceed to frame observables
+\end{center}
+\end{block}
+
+\vspace{-0.25em}
+\begin{alertblock}{Numerical validation}
+Non-finite $k_T$ or $m_T$ causes a \textbf{numerical rejection}. The rejected pair is recorded together with its event, subevent, primitive channel and rejection reason.
+\end{alertblock}
+\end{column}
+
+\begin{column}{0.53\textwidth}
+\textbf{Pair kinematics}
+\vspace{-0.35em}
+\[
+\vec{P}=\vec{p}_a+\vec{p}_b,
+\]
+\vspace{-0.7em}
+\[
+k_T=\frac{1}{2}
+\sqrt{(p_{x,a}+p_{x,b})^2+(p_{y,a}+p_{y,b})^2},
+\]
+\vspace{-0.7em}
+\[
+m_T=\sqrt{\left(\frac{m_a+m_b}{2}\right)^2+k_T^2}.
+\]
+\vspace{-0.3em}
+
+\begin{block}{$k_T/m_T$ slicing}
+If slicing is enabled, SAFA determines the slice \textbf{once} from the already-computed pair kinematics.
+
+\vspace{-0.25em}
+\[
+x_i \le x < x_{i+1}.
+\]
+\vspace{-0.45em}
+
+If both axes are enabled, the pair receives a combined $(k_T,m_T)$ slice.
+\end{block}
+
+\begin{block}{Outside the configured slice}
+A numerically valid pair outside the configured $k_T/m_T$ range is \textbf{not} a numerical rejection. It simply does not continue to the frame-observable / histogram stage.
+\end{block}
+\end{column}
+
+\end{columns}
+
+\vfill
+\begin{center}
+\boxed{\text{Pair kinematics are calculated once and reused downstream}}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}{6. Frame Transformations: Lab $\rightarrow$ LCMS $\rightarrow$ PRF}
+\fontsize{6.5}{7.2}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.38\textwidth}
+\begin{block}{Transformation flow}
+\begin{center}
+$\Delta x^\mu_{\rm Lab}=x_a^\mu-x_b^\mu$\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Longitudinal boost\\[-0.15em]
+$\downarrow$\\[-0.15em]
+\textbf{LCMS}\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Define OSL axes and project\\[-0.15em]
+$\downarrow$\\[-0.15em]
+$(r_{\rm out},r_{\rm side},r_{\rm long})_{\rm LCMS}$\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Boost along \textbf{out} only\\[-0.15em]
+$\downarrow$\\[-0.15em]
+\textbf{PRF}
+\end{center}
+\end{block}
+
+\vspace{-0.3em}
+\begin{alertblock}{Exact $k_T=0$ case}
+When $k_T=0$, the out direction is defined from the transverse relative momentum
+$\vec q_T=\vec p_{T,a}-\vec p_{T,b}$.
+\end{alertblock}
+\end{column}
+
+\begin{column}{0.58\textwidth}
+\textbf{Lab $\rightarrow$ LCMS}
+\vspace{-0.4em}
+\[
+\beta_{\rm LCMS}=\frac{P_z}{E},
+\qquad
+\gamma_{\rm LCMS}=\frac{1}{\sqrt{1-\beta_{\rm LCMS}^2}}.
+\]
+\vspace{-0.6em}
+\[
+\Delta t_{\rm LCMS}=\gamma_{\rm LCMS}
+(\Delta t_{\rm Lab}-\beta_{\rm LCMS}\Delta z_{\rm Lab}),
+\]
+\vspace{-0.65em}
+\[
+\Delta z_{\rm LCMS}=\gamma_{\rm LCMS}
+(\Delta z_{\rm Lab}-\beta_{\rm LCMS}\Delta t_{\rm Lab}).
+\]
+\vspace{-0.35em}
+The transverse coordinates are unchanged.
+
+\smallskip
+\textbf{OSL basis in the LCMS}
+\vspace{-0.35em}
+\[
+\hat e_{\rm out}=\frac{(K_x,K_y)}{k_T},
+\qquad
+\hat e_{\rm side}=(-e_{{\rm out},y},e_{{\rm out},x}),
+\]
+\vspace{-0.45em}
+with the long direction along the beam $z$ axis.
+
+\smallskip
+\textbf{LCMS $\rightarrow$ PRF}
+\vspace{-0.35em}
+\[
+\beta_{\rm out}=\frac{2k_T\,\gamma_{\rm LCMS}}{E},
+\qquad
+\gamma_{\rm out}=\frac{1}{\sqrt{1-\beta_{\rm out}^2}}.
+\]
+\vspace{-0.6em}
+\[
+\Delta t_{\rm PRF}=\gamma_{\rm out}
+(\Delta t_{\rm LCMS}-\beta_{\rm out}r_{\rm out}^{\rm LCMS}),
+\]
+\vspace{-0.65em}
+\[
+r_{\rm out}^{\rm PRF}=\gamma_{\rm out}
+(r_{\rm out}^{\rm LCMS}-\beta_{\rm out}\Delta t_{\rm LCMS}).
+\]
+\vspace{-0.35em}
+\[
+\boxed{r_{\rm side}^{\rm PRF}=r_{\rm side}^{\rm LCMS},\qquad
+r_{\rm long}^{\rm PRF}=r_{\rm long}^{\rm LCMS}}
+\]
+\end{column}
+
+\end{columns}
+\end{frame}
+
+\begin{frame}{6. HBT Pair Observables}
+\fontsize{7.4}{8.3}\selectfont
+
+\begin{center}
+All frame observables are calculated \textbf{once for the physical pair} and then reused by the histogram stage.
+\end{center}
+
+\begin{columns}[T]
+
+\begin{column}{0.46\textwidth}
+\begin{block}{Emission-time differences}
+\[
+\Delta t_{\rm Lab},
+\qquad
+\Delta t_{\rm LCMS},
+\qquad
+\Delta t_{\rm PRF}
+\]
+\end{block}
+
+\begin{block}{Spatial components}
+\[
+r_{\rm out}^{\rm LCMS},
+\qquad
+r_{\rm out}^{\rm PRF},
+\]
+\vspace{-0.45em}
+\[
+r_{\rm side},
+\qquad
+r_{\rm long}
+\]
+\end{block}
+\end{column}
+
+\begin{column}{0.50\textwidth}
+\begin{block}{Radial separations}
+\[
+r_{\rm LCMS}=
+\sqrt{(r_{\rm out}^{\rm LCMS})^2+r_{\rm side}^2+r_{\rm long}^2},
+\]
+\vspace{-0.45em}
+\[
+r_{\rm PRF}=
+\sqrt{(r_{\rm out}^{\rm PRF})^2+r_{\rm side}^2+r_{\rm long}^2}.
+\]
+\end{block}
+
+\begin{alertblock}{Numerical validity}
+After the transformations, every frame observable is checked for finiteness. A non-finite value causes a \textbf{numerical pair rejection}.
+\end{alertblock}
+\end{column}
+
+\end{columns}
+
+\vfill
+\begin{center}
+\boxed{\text{Frame observables computed once }\longrightarrow\text{ reused downstream}}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}{7. Histogram Accumulation}
+\fontsize{6.7}{7.5}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.40\textwidth}
+\begin{block}{Accumulation flow}
+\begin{center}
+Processed physical pair\\[-0.15em]
+$\downarrow$\\[-0.15em]
+9 HBT observables already known\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Determine histogram bin for each observable \textbf{once}\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Reuse the bin locations\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Compatible origins + final products\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Global histogram\\[-0.15em]
+$\downarrow$\\[-0.15em]
+If slicing is active: corresponding $k_T/m_T$ slice
+\end{center}
+\end{block}
+
+\vspace{-0.25em}
+\begin{alertblock}{Raw counts only}
+At this stage SAFA stores \textbf{raw integer counts}. No normalization, fitting, or statistical analysis is performed here.
+\end{alertblock}
+\end{column}
+
+\begin{column}{0.56\textwidth}
+\textbf{Nine raw histograms per destination}
+
+\smallskip
+\textbf{OSL components --- absolute values}
+\vspace{-0.3em}
+\[
+|r_{\rm out}^{\rm LCMS}|,\quad
+|r_{\rm out}^{\rm PRF}|,\quad
+|r_{\rm side}|,\quad
+|r_{\rm long}|
+\]
+\vspace{-0.55em}
+
+\textbf{Radial distributions}
+\vspace{-0.3em}
+\[
+r_{\rm LCMS},\qquad r_{\rm PRF}
+\]
+\vspace{-0.55em}
+
+\textbf{Relative-time distributions --- signed}
+\vspace{-0.3em}
+\[
+\Delta t_{\rm Lab},\qquad
+\Delta t_{\rm LCMS},\qquad
+\Delta t_{\rm PRF}
+\]
+\vspace{-0.35em}
+
+\begin{block}{Global and sliced histograms}
+With slicing active, an accepted pair contributes to the \textbf{global histogram} and to its \textbf{single} $k_T/m_T$ slice.
+\end{block}
+
+\begin{block}{Histogram boundaries}
+Values outside the configured range are counted explicitly as \textbf{underflow} or \textbf{overflow}; in-range values increment the corresponding bin.
+\end{block}
+\end{column}
+
+\end{columns}
+
+\vfill
+\begin{center}
+\boxed{\text{Bin classification once }\longrightarrow\text{ reuse across origins and products}}
+\end{center}
+
+\end{frame}
+
+
+\begin{frame}{8. Full-Sample Processing and Deterministic Reduction}
+\fontsize{6.5}{7.3}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.43\textwidth}
+\begin{block}{Full-sample flow}
+\begin{center}
+Complete sample\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Independent outer events\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Worker 1 \quad Worker 2 \quad $\cdots$ \quad Worker $N$\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Event-local histograms $H_{\rm event}$\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Complete event valid?\\[-0.15em]
+\textbf{Yes: commit} \qquad \textbf{No: discard}\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Worker-private histograms $H_i$\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Workers join\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Deterministic reduction\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Complete raw histogram state
+\end{center}
+\end{block}
+
+\vspace{-0.25em}
+\begin{alertblock}{Transactional event processing}
+An event contributes only if the \textbf{complete outer event is valid}. An event-level input failure discards all histogram contributions produced by that event.
+\end{alertblock}
+\end{column}
+
+\begin{column}{0.53\textwidth}
+\begin{block}{Commit rule}
+Each outer event first fills a temporary state:
+\[
+H_{\rm event}.
+\]
+Only after successful completion is it committed:
+\[
+H_{\rm worker}\leftarrow H_{\rm worker}+H_{\rm event}.
+\]
+\end{block}
+
+\vspace{-0.2em}
+\begin{block}{Subevent vs. event failure}
+A recoverable \textbf{subevent failure} skips that subevent while other valid subevents of the same outer event may remain usable. An \textbf{event-level input failure} discards the whole outer event transaction.
+\end{block}
+
+\vspace{-0.2em}
+\begin{block}{Parallel execution and reduction}
+Each worker owns a private histogram state $H_i$; histogram bins are never updated concurrently by several workers. After all workers join,
+\[
+H_{\rm total}=H_1+H_2+\cdots+H_N.
+\]
+Bins, underflows, and overflows are reduced \textbf{bin by bin using integer counters}.
+\end{block}
+\end{column}
+
+\end{columns}
+
+\vfill
+\begin{center}
+\boxed{\text{Parallel scheduling may change; the scientific result does not.}}
+\end{center}
+
+\end{frame}
+
+
+
+\begin{frame}{9. Statistical Analysis: From Raw Counts to Fits}
+\fontsize{6.8}{7.6}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.43\textwidth}
+\begin{block}{Post-sample analysis flow}
+\begin{center}
+Full-sample raw histogram\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Select statistical region\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Derive data-driven seeds\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Gaussian \quad / \quad Gaussian + exponential\\[-0.15em]
+$\downarrow$\\[-0.15em]
+MIGRAD minimization\\[-0.15em]
+$\downarrow$\\[-0.15em]
+MINOS uncertainties\\[-0.15em]
+$\downarrow$\\[-0.15em]
+Normalize for output
+\end{center}
+\end{block}
+
+\vspace{-0.25em}
+\begin{alertblock}{Raw counts drive the fits}
+The statistical objectives operate directly on the \textbf{raw integer histogram counts}. Normalization is performed only \textbf{after} the fits and $\Delta t$ statistics are complete.
+\end{alertblock}
+\end{column}
+
+\begin{column}{0.53\textwidth}
+\textbf{Shape-region selection}
+
+\smallskip
+For OSL and radial histograms, the selected region starts at bin zero and ends immediately before the \textbf{first empty bin to the right of the first modal plateau}.
+
+\smallskip
+Leading empty bins are retained; later disconnected islands are not reincorporated.
+
+\medskip
+\begin{block}{Pure Gaussian fit region}
+In the current production path, the pure Gaussian uses the \textbf{complete selected shape region}. No external 5\% or 10\% Gaussian-core threshold is applied to the fit.
+\end{block}
+
+\begin{block}{Estimator independence}
+If \texttt{hbt\_fit\_estimator: all}, Poisson, Neyman and Pearson are run as \textbf{three independent fits}. Their minima, seeds anchored to fitted results, and uncertainties are not shared.
+\end{block}
+\end{column}
+
+\end{columns}
+
+\end{frame}
+
+
+\begin{frame}{9. Fit Models and Statistical Estimators}
+\fontsize{6.3}{7.0}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.47\textwidth}
+\textbf{Pure Gaussian}
+
+\smallskip
+OSL:
+\[
+G(x;R)\propto \exp\!\left(-\frac{x^2}{4R^2}\right)
+\]
+Radial:
+\[
+G(r;R)\propto r^2\exp\!\left(-\frac{r^2}{4R^2}\right)
+\]
+
+Parameters:
+\[
+R,\qquad A_G>0
+\]
+The Gaussian amplitude is free and positive.
+
+\medskip
+\textbf{Gaussian + exponential}
+\[
+P=f_{\rm core}G(R_{\rm core})+
+(1-f_{\rm core})E(R_{\rm tail})
+\]
+OSL: $E(x;R_{\rm tail})\propto e^{-x/R_{\rm tail}}$
+
+Radial: $E(r;R_{\rm tail})\propto r^2 e^{-r/R_{\rm tail}}$
+
+\smallskip
+The two components are normalized independently over the selected fit region before mixing.
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\textbf{Implemented estimators}
+
+\smallskip
+\textbf{Poisson deviance}
+\vspace{-0.35em}
+\[
+D=2\sum_i\left[\mu_i-n_i+n_i\ln\!\left(\frac{n_i}{\mu_i}\right)\right]
+\]
+\vspace{-0.45em}
+with the $n_i=0$ contribution retained as $2\mu_i$.
+
+\smallskip
+\textbf{Neyman $\chi^2$}
+\vspace{-0.35em}
+\[
+\chi^2_N=\sum_{n_i>0}\frac{(n_i-\mu_i)^2}{n_i}
+\]
+\vspace{-0.45em}
+Zero-count observed bins are omitted.
+
+\smallskip
+\textbf{Pearson $\chi^2$}
+\vspace{-0.35em}
+\[
+\chi^2_P=\sum_i\frac{(n_i-\mu_i)^2}{\mu_i}
+\]
+\vspace{-0.4em}
+Zero-count observed bins remain in the sum.
+
+\begin{alertblock}{Independent fits}
+Poisson, Neyman and Pearson each execute their own Gaussian and mixed-model minimizations.
+\end{alertblock}
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}{9. Gaussian Fit: Seed Generation}
+\fontsize{6.8}{7.6}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.45\textwidth}
+\begin{block}{Seed 1: moments}
+From the selected raw histogram:
+
+\textbf{OSL}
+\[
+R_{\rm moment}=\sqrt{\frac{\langle x^2\rangle}{2}}
+\]
+
+\textbf{Radial}
+\[
+R_{\rm moment}=\sqrt{\frac{\langle r^2\rangle}{6}}
+\]
+\end{block}
+
+\begin{block}{Seed 2: half maximum}
+A shape-constrained PAVA estimate is used only to identify the half-maximum width and obtain
+\[
+R_{\rm HM}.
+\]
+The \textbf{raw fit counts are never replaced or smoothed}.
+\end{block}
+\end{column}
+
+\begin{column}{0.51\textwidth}
+\begin{center}
+\textbf{Two independent Gaussian starts}
+\end{center}
+\vspace{-0.35em}
+\[
+\boxed{R_0\in\{R_{\rm moment},\;R_{\rm HM}\}}
+\]
+
+For each radius seed, SAFA derives the amplitude seed from the exact Gaussian integral over the selected region:
+\[
+A_G^{(0)}=
+\frac{1}{\displaystyle\int_{\rm selected} G(x;R_0)\,dx}
+\]
+(with the corresponding radial integral for radial fits).
+
+\begin{center}
+\texttt{moment start}
+$\longrightarrow$ MIGRAD
+
+\smallskip
+\texttt{half-maximum start}
+$\longrightarrow$ MIGRAD
+
+\smallskip
+$\downarrow$
+
+\textbf{Select the valid start with the lowest $q$}
+\end{center}
+
+\begin{alertblock}{Then MINOS}
+After the Gaussian minimum is selected, MINOS is run for both the radius and the free amplitude.
+\end{alertblock}
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}{9. Gaussian + Exponential: 36 Deterministic Seeds}
+\fontsize{6.6}{7.4}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.47\textwidth}
+\textbf{Core-radius seeds}
+\[
+R_{\rm core}^{(0)}\in
+\left\{
+R_G,\;0.5R_{\rm HM},\;R_{\rm HM},\;2R_{\rm HM}
+\right\}
+\]
+
+$R_G$ is the Gaussian result from the \textbf{same estimator}: Poisson $\to$ Poisson, Neyman $\to$ Neyman, Pearson $\to$ Pearson.
+
+\medskip
+\textbf{Exponential moment seed}
+
+OSL:
+\[
+R_{\rm tail,moment}=\langle x\rangle
+\]
+Radial:
+\[
+R_{\rm tail,moment}=\frac{\langle r\rangle}{3}
+\]
+
+Tail starts:
+\[
+R_{\rm tail}^{(0)}=R_{\rm tail,moment}\times\{0.5,1,2\}
+\]
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\textbf{Initial core fractions}
+\[
+f_{\rm core}^{(0)}\in\{0.25,0.50,0.75\}
+\]
+
+\medskip
+The deterministic grid therefore contains
+\[
+4\times3\times3=
+\boxed{36\ \text{MIGRAD starts per estimator}}
+\]
+
+\begin{center}
+\begin{tabular}{c|c|c}
+$R_{\rm core}$ & $R_{\rm tail}$ scale & $f_{\rm core}$ \\
+\hline
+4 choices & 3 choices & 3 choices
+\end{tabular}
+\end{center}
+
+\begin{alertblock}{Why multi-start?}
+The mixed objective can contain several numerical minima. SAFA explores the same deterministic grid every time, then groups the converged endpoints into solution basins before deciding which physical solution to publish.
+\end{alertblock}
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}{9. Selecting the Best Mixed-Fit Solution}
+\fontsize{6.3}{7.0}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.46\textwidth}
+\textbf{1. Group converged endpoints into basins}
+
+Each valid start ends at
+\[
+(\log R_{\rm core},\;\log R_{\rm tail},\;f_{\rm core}).
+\]
+Two endpoints are connected when
+\[
+|\Delta\log R_{\rm core}|\le0.01,
+\]
+\[
+|\Delta\log R_{\rm tail}|\le0.01,
+\qquad
+|\Delta f_{\rm core}|\le0.01.
+\]
+
+\medskip
+\textbf{2. Apply physical $f_{\rm core}$ cuts to the basin mean}
+
+PRD:
+\[
+0.1<\langle f_{\rm core}\rangle<0.9
+\]
+P and PR:
+\[
+0.1<\langle f_{\rm core}\rangle<0.99
+\]
+\end{column}
+
+\begin{column}{0.50\textwidth}
+\textbf{3. Choose the winning basin}
+
+Basins are ranked by:
+\begin{enumerate}
+    \setlength{\itemsep}{0.2em}
+    \item \textbf{largest number of converged starts};
+    \item if tied, smallest $q$ reached by the basin;
+    \item if still tied, lowest deterministic start index.
+\end{enumerate}
+
+\begin{alertblock}{Selection principle}
+\centering
+\textbf{Robust convergence wins before minimum $q$.}
+\end{alertblock}
+
+\textbf{4. Final polishing and errors}
+
+Members of the selected basin are ordered by terminal $q$. SAFA reruns a \textbf{fresh MIGRAD + MINOS} from the best endpoint.
+
+If it fails, the next endpoint is tried \textbf{inside the same selected basin}. SAFA does not switch to another basin.
+
+\medskip
+No condition such as
+\[
+R_{\rm tail}>R_{\rm core}
+\]
+is imposed.
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}{9. Fit Quality Cuts and Parameter Errors}
+\fontsize{6.2}{6.9}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.48\textwidth}
+\textbf{MIGRAD validity requirements}
+
+A candidate is rejected when, among other conditions:
+\begin{itemize}
+    \setlength{\itemsep}{0.15em}
+    \item the objective evaluation fails;
+    \item the MIGRAD call limit is reached;
+    \item the EDM remains above the allowed Minuit level;
+    \item $q_{\min}$ is unavailable / non-finite;
+    \item the covariance is invalid;
+    \item Minuit marks the minimum as invalid.
+\end{itemize}
+
+\begin{block}{Current radial-$m_T$ statistics threshold}
+The radial one-dimensional $m_T$ quality-cut machinery exists, but the production threshold is currently
+\[
+N_{\min}=0.
+\]
+It therefore does not veto any non-empty slice.
+\end{block}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{MINOS uncertainties}
+
+For all three estimators,
+\[
+\mathrm{Up}=1.
+\]
+Thus MINOS searches for
+\[
+\Delta(-2\ln L)=1 \quad \text{(Poisson)},
+\]
+\[
+\Delta\chi^2=1 \quad \text{(Neyman / Pearson)}.
+\]
+
+Radii are optimized in $\log R$. MINOS first obtains the lower and upper limits in log-space; SAFA transforms both endpoints back to physical $R$-space:
+\[
+R=R_{\rm fit}{}^{+\sigma_+}_{-\sigma_-}.
+\]
+The resulting radius errors are therefore naturally \textbf{asymmetric}.
+
+\begin{alertblock}{$f_{\rm core}$ boundary requirement}
+MINOS is applied directly to $f_{\rm core}$. The final interval must remain strictly inside $0<f_{\rm core}<1$; touching or crossing either boundary rejects the solution.
+\end{alertblock}
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}{9. $\Delta t$ Statistics and Counting Errors}
+\fontsize{6.7}{7.5}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.47\textwidth}
+\textbf{Signed $\Delta t$ distributions}
+
+These histograms are \textbf{not fitted} with the Gaussian / mixed-model machinery.
+
+The selected region is bounded by the first empty bin on each side of the modal plateau. From the raw selected counts SAFA computes
+\[
+\langle t\rangle,
+\]
+\[
+\sigma_{\Delta t}=\sqrt{\langle t^2\rangle-\langle t\rangle^2}.
+\]
+
+For $N>1$, the width uncertainty is
+\[
+\boxed{
+\delta\sigma_{\Delta t}=\frac{\sigma_{\Delta t}}{\sqrt{2(N-1)}}
+}
+\]
+
+If the variance is negative/non-finite, or if there is insufficient count for the uncertainty, SAFA reports the corresponding invalid/insufficient status rather than forcing a value.
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\textbf{Normalized histogram counting errors}
+
+Only after the statistical analysis, each selected histogram is normalized for presentation/output.
+
+For bin $i$, with raw count $n_i$, total selected count $N$, and bin width $\Delta x$:
+\[
+p_i=\frac{n_i}{N\,\Delta x},
+\]
+\[
+\boxed{
+\delta p_i=\frac{\sqrt{n_i}}{N\,\Delta x}
+}
+\]
+
+These are the counting errors written with the normalized distributions.
+
+\begin{alertblock}{Two different uncertainty concepts}
+\begin{itemize}
+    \setlength{\itemsep}{0.1em}
+    \item Fit-parameter uncertainties: \textbf{MINOS}.
+    \item Normalized-bin uncertainties: \textbf{Poisson counting error} $\sqrt{n_i}$ propagated through the normalization.
+\end{itemize}
+\end{alertblock}
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}[fragile]{10. Output Organization}
+\fontsize{6.25}{6.95}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.53\textwidth}
+\textbf{Production hierarchy}
+
+\begin{verbatim}
+output_path/
+|-- product_catalog.csv
+|-- product_0/
+|   |-- global/
+|   |   |-- P/
+|   |   |-- PR/
+|   |   `-- PRD/
+|   `-- <configured-slice-token>/
+|       |-- P/
+|       |-- PR/
+|       `-- PRD/
+`-- product_1/ ...
+\end{verbatim}
+
+Inside each origin, results are organized by frame, observable family and observable, e.g.
+
+\begin{verbatim}
+LCMS/osl/r_out/
+LCMS/radial/r_radial/
+LCMS/dt/delta_t/
+PRF/osl/r_out/
+PRF/radial/r_radial/
+PRF/dt/delta_t/
+LAB/dt/delta_t/
+\end{verbatim}
+\end{column}
+
+\begin{column}{0.43\textwidth}
+\textbf{Run-level traceability}
+
+\texttt{product\_catalog.csv} maps
+\[
+\boxed{\text{product index}}
+\longleftrightarrow
+\boxed{\text{configured product}}
+\]
+\[
+\longleftrightarrow
+\boxed{\text{primitive channels}}
+\]
+and stores the canonical species of each primitive channel.
+
+\medskip
+\textbf{Global vs. sliced output}
+\begin{itemize}
+    \setlength{\itemsep}{0.15em}
+    \item OSL fit results are written \textbf{only for the global sample}.
+    \item Kinematic slices contain radial and signed $\Delta t$ results.
+    \item Slice names use the actual configured edges.
+\end{itemize}
+
+Examples:\par
+\texttt{mT\_slice0\_0.5-0.7}\par
+\resizebox{\linewidth}{!}{\texttt{kT\_slice1\_0.35-0.6\_\_mT\_slice1\_0.75-1}}
+
+\begin{alertblock}{Clean output boundary}
+The production root must be \textbf{absent or empty} before SAFA writes the results, preventing stale files from being mistaken for current output.
+\end{alertblock}
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}{10. Output Files and Fit Diagnostics}
+\fontsize{6.15}{6.85}\selectfont
+
+\begin{columns}[T]
+
+\begin{column}{0.49\textwidth}
+\textbf{Spatial distributions}
+
+\texttt{distribution.csv}
+\begin{itemize}
+    \setlength{\itemsep}{0.12em}
+    \item bin edges and center;
+    \item normalized density $p_i$;
+    \item counting error $\delta p_i$;
+    \item valid Gaussian and/or mixed fitted PDFs for each enabled estimator.
+\end{itemize}
+
+\medskip
+\texttt{fit\_parameters.csv}
+\begin{itemize}
+    \setlength{\itemsep}{0.12em}
+    \item model, estimator and parameter value;
+    \item asymmetric MINOS errors $\sigma_-,\sigma_+$;
+    \item fit validity and explicit failure reason;
+    \item $q_{\min}$, selected region and $N$;
+    \item MIGRAD, covariance and MINOS diagnostics;
+    \item for the mixed fit: diagnostics for \textbf{all 36 deterministic starts}, terminal $(R_{\rm core},R_{\rm tail},f_{\rm core})$, and selected-basin multiplicity.
+\end{itemize}
+\end{column}
+
+\begin{column}{0.47\textwidth}
+\textbf{Signed $\Delta t$ output}
+
+\texttt{distribution.csv}
+\[
+\Delta t_i,\qquad p_i,\qquad \delta p_i
+\]
+
+\texttt{statistics.csv}
+\[
+N,\qquad \langle\Delta t\rangle,\qquad
+\sigma_{\Delta t},\qquad \delta\sigma_{\Delta t}
+\]
+
+There is no \texttt{fit\_parameters.csv} for $\Delta t$ because these distributions are summarized by moments rather than by the Gaussian / mixed fit machinery.
+
+\begin{alertblock}{Auditable fit output}
+SAFA stores not only the published fit parameters, but also the numerical information needed to trace \textbf{how the selected solution was obtained}.
+\end{alertblock}
+
+\textbf{Diagnostic run summary}\par
+The executable also reports to stdout particle/pair rejections, formed and valid pair counts, P/PR/PRD routing, slice counts, and histogram-range warnings.
+
+\medskip
+\textbf{Output stage rule}\par
+The production writer performs \textbf{no new scientific calculation}: it serializes the already-derived post-sample analysis state.
+\end{column}
+
+\end{columns}
+\end{frame}
+
+
+\begin{frame}{Full Pipeline Overview}
+\small
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.35cm and 0.35cm,
+    stage/.style={
+        draw=structure.fg,
+        rounded corners=2pt,
+        fill=structure.fg!5,
+        minimum width=1.90cm,
+        minimum height=1.18cm,
+        text width=1.72cm,
+        align=center,
+        font=\bfseries\scriptsize
+    },
+    flow/.style={-{Latex[length=2.1mm]}, thick, draw=structure.fg}
+]
+
+\node[stage] (config) {Configuration};
+\node[stage, right=of config] (reading) {Event\\Reading};
+\node[stage, right=of reading] (selection) {Particle\\Selection};
+\node[stage, right=of selection] (construction) {Pair\\Construction};
+\node[stage, right=of construction] (processing) {Pair\\Processing};
+
+\node[stage, font=\bfseries\tiny, below=1.35cm of processing] (frames) {Frame\\Transformations};
+\node[stage, left=of frames] (hist) {Histograms};
+\node[stage, left=of hist] (reduction) {Reduction};
+\node[stage, left=of reduction] (fits) {Fits};
+\node[stage, left=of fits] (output) {Output};
+
+\draw[flow] (config) -- (reading);
+\draw[flow] (reading) -- (selection);
+\draw[flow] (selection) -- (construction);
+\draw[flow] (construction) -- (processing);
+\draw[flow] (processing) -- (frames);
+\draw[flow] (frames) -- (hist);
+\draw[flow] (hist) -- (reduction);
+\draw[flow] (reduction) -- (fits);
+\draw[flow] (fits) -- (output);
+
+\end{tikzpicture}
+\end{center}
+\end{frame}
+
+
+\end{document}
