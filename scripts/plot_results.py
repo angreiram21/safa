@@ -102,10 +102,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--estimator",
         choices=MIXED_ESTIMATORS,
-        default="poisson",
+        default="neyman",
         help=(
-            "fit estimator to plot for both Gaussian and mixed curves; "
-            "default: poisson"
+            "fit estimator to plot; mixed curves are available for Neyman; "
+            "default: neyman"
         ),
     )
     parser.add_argument(

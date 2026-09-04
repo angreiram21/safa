@@ -23,11 +23,11 @@ enum class FitObservableFamily {
 };
 
 /**
- * @brief Statistical objective used to estimate Gaussian and mixed parameters.
+ * @brief Statistical objective identity retained by fit-result slots.
  *
- * Poisson, Neyman, and Pearson are fitted independently. Each estimator keeps
- * its own deterministic starts, selected minimum, MIGRAD state, and MINOS
- * uncertainties; numerical results are never pooled across estimators.
+ * The pure Gaussian supports Poisson, Neyman, and Pearson independently. The
+ * redesigned mixed model is fitted with Neyman only; its other estimator slots
+ * remain explicit NotApplicable results for schema stability.
  */
 enum class FitEstimator {
     Poisson, ///< Binned Poisson deviance; production/default estimator.
@@ -43,7 +43,7 @@ enum class FitEstimator {
  * near-pure-Gaussian limit.
  */
 enum class MixedCoreFractionPolicy {
-    RequireCoreAndTail,   ///< PRD: require 0.1 < mean(f_core) < 0.9.
+    RequireCoreAndTail,  ///< PRD: require 0.1 < mean(f_core) < 0.9.
     RejectPureGaussian   ///< P/PR: require 0.1 < mean(f_core) < 0.99.
 };
 
@@ -226,7 +226,7 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
  * @param endpoints Final endpoint for every attempted deterministic start.
  * @param q_values Objective value associated with every attempted start.
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
- * @param core_fraction_policy Origin-dependent f_core admissibility policy.
+ * @param core_fraction_policy Origin-dependent f_core mixing-coefficient admissibility policy.
  * @return Start indices from the selected basin ordered by increasing q and
  *         then by increasing start index. An empty vector means every basin is
  *         physically degenerate.
@@ -254,7 +254,7 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
  * @param endpoints Final endpoint for every attempted deterministic start.
  * @param q_values Objective value associated with every attempted start.
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
- * @param core_fraction_policy Origin-dependent f_core admissibility policy.
+ * @param core_fraction_policy Origin-dependent f_core mixing-coefficient admissibility policy.
  * @return Lowest-q start index in the selected basin, or std::nullopt when
  *         every numerical basin is physically degenerate.
  * @throws std::invalid_argument If array sizes differ, no valid start is
@@ -291,7 +291,7 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
  * @param reject_limits Whether parameter-limit crossings invalidate the fit.
  * @return FitFailureReason::None when both required sides are valid.
  *
- * Limit rejection is enabled for the bounded core fraction and disabled for
+ * Limit rejection is enabled for the bounded Gaussian mixing coefficient and disabled for
  * log-radius parameters, which have no physical bounds.
  */
 [[nodiscard]] FitFailureReason fit_failure_from_minos(
@@ -300,8 +300,8 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
 );
 
 /**
- * @brief Classify the physical validity of a fitted mixed core fraction.
- * @param core_fraction Fitted physical fraction.
+ * @brief Classify the physical validity of a fitted mixed Gaussian mixing coefficient.
+ * @param core_fraction Fitted physical mixing coefficient.
  * @return None for 0 < f_core < 1, DegenerateCoreFraction at either exact
  *         endpoint, or NonFiniteMinimum for a non-finite/out-of-domain value.
  */
@@ -345,7 +345,7 @@ struct GaussianFitResult {
 };
 
 /**
- * @brief Result of one independent three-parameter mixed fit.
+ * @brief Result of one independent mixed fit with analytically profiled A.
  *
  * Thirty-six deterministic starts form the Cartesian product
  *
@@ -354,7 +354,7 @@ struct GaussianFitResult {
  * - f_core in {0.25, 0.50, 0.75}.
  *
  * R_G always comes from the pure-Gaussian fit using the same estimator. Start
- * indices use core-major, then tail-major, then fraction-major ordering:
+ * indices use core-major, then tail-major, then coefficient-major ordering:
  * `index = (core_index * 3 + tail_index) * 3 + fraction_index`. Valid MIGRAD
  * endpoints are grouped into numerical basins. After the origin-specific
  * strict f_core admissibility filter, the basin reached by the largest number
@@ -367,7 +367,10 @@ struct GaussianFitResult {
  * never trigger a basin change. If every endpoint fails, the original lowest-q
  * endpoint remains the primary failure diagnostic. `consensus_size` records
  * the selected basin multiplicity and is not an independent acceptance veto.
- * R_HM remains a deterministic seed only.
+ * R_HM remains a deterministic seed only. The production search varies only
+ * R_core, R_tail and f_core; for every such tuple the positive amplitude A is
+ * recalculated analytically at the Neyman minimum. A dedicated final profile
+ * obtains the asymmetric A uncertainty after the selected 3D minimum is fixed.
  */
 struct MixedFitResult {
     /** Number of deterministic Cartesian-product mixed MIGRAD starts. */
@@ -388,16 +391,21 @@ struct MixedFitResult {
     std::optional<std::size_t> selected_core_start;
     /// Final post-selection MIGRAD diagnostic associated with the published endpoint.
     MigradDiagnostic selected_migrad;
+    /// Auxiliary explicit-A MIGRAD state used only to seed the final A profile.
+    MigradDiagnostic amplitude_profile_migrad;
     MinosDiagnostic minos_core_radius; ///< MINOS diagnostic for log(R_core).
     MinosDiagnostic minos_tail_radius; ///< MINOS diagnostic for log(R_tail).
     MinosDiagnostic minos_core_fraction; ///< MINOS diagnostic for f_core.
+    MinosDiagnostic minos_amplitude; ///< MINOS profile diagnostic for log(A).
     std::optional<double> q_min;        ///< Selected basin minimum objective value.
     /// Physical core radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> core_radius;
     /// Physical tail radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> tail_radius;
-    /// Physical core fraction and asymmetric MINOS errors when fully valid.
+    /// Physical Gaussian mixing coefficient and asymmetric MINOS errors.
     std::optional<FitParameterEstimate> core_fraction;
+    /// Positive mixed amplitude A with asymmetric profile errors.
+    std::optional<FitParameterEstimate> amplitude;
     /// Valid fitted bin densities over the full mixed region.
     std::vector<double> fitted_pdf;
 };
@@ -420,11 +428,11 @@ struct ShapeHistogramResult {
     GaussianFitResult gaussian_neyman;
     /// Independent full-range free-amplitude Gaussian using Pearson chi-square.
     GaussianFitResult gaussian_pearson;
-    /// Full-range mixed fit using the default binned Poisson deviance.
+    /// Legacy Poisson mixed slot; redesigned mixed fit returns NotApplicable.
     MixedFitResult mixed;
     /// Full-range mixed fit using Neyman chi-square as an independent estimator.
     MixedFitResult mixed_neyman;
-    /// Full-range mixed fit using Pearson chi-square as an independent estimator.
+    /// Legacy Pearson mixed slot; redesigned mixed fit returns NotApplicable.
     MixedFitResult mixed_pearson;
 };
 

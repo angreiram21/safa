@@ -94,9 +94,12 @@ MixedFitResult invalid_mixed_result(
         0U,
         std::nullopt,
         empty,
+        empty,
         unattempted_minos(),
         unattempted_minos(),
         unattempted_minos(),
+        unattempted_minos(),
+        std::nullopt,
         std::nullopt,
         std::nullopt,
         std::nullopt,
@@ -203,7 +206,7 @@ constexpr std::uint64_t kMinimumRadialSliceSelectedCount = 0U;
  * @param binning Validated uniform binning.
  * @param apply_radial_slice_quality_cut Whether the configured radial kinetic
  *        slice threshold is evaluated for this histogram.
- * @param core_fraction_policy Origin-dependent mixed-basin f_core policy.
+ * @param core_fraction_policy Origin-dependent mixed-basin mixing-coefficient policy.
  * @param estimator_mode Configured estimator set to execute. Disabled
  *        estimators are returned explicitly as NotApplicable and are never
  *        passed to MIGRAD or MINOS.
@@ -548,7 +551,7 @@ DeltaTHistogramResult analyze_delta_t_histogram(
  * @param apply_radial_mt_quality_cut Whether the radial N_selected threshold
  *        machinery applies to this one-dimensional radial mT slice. The
  *        current threshold is zero, so no non-empty slice is vetoed by it.
- * @param core_fraction_policy Origin-dependent mixed-basin f_core policy.
+ * @param core_fraction_policy Origin-dependent mixed-basin mixing-coefficient policy.
  * @param estimator_mode Configured estimator set propagated to every OSL and
  *        radial fit in this destination.
  * @return Derived state with configured fits/moments complete and
@@ -728,8 +731,11 @@ void require_shape_result(const ShapeHistogramResult& result) {
             if (!mixed->core_radius.has_value() ||
                 !mixed->tail_radius.has_value() ||
                 !mixed->core_fraction.has_value() ||
+                !mixed->amplitude.has_value() ||
                 !mixed->q_min.has_value() ||
                 !mixed->selected_core_start.has_value() ||
+                fit_failure_from_migrad(mixed->amplitude_profile_migrad) !=
+                    FitFailureReason::None ||
                 mixed->fitted_pdf.size() != count) {
                 throw std::logic_error(
                     "HBT analysis state: valid mixed fit is incomplete"
@@ -738,6 +744,7 @@ void require_shape_result(const ShapeHistogramResult& result) {
         } else if (mixed->core_radius.has_value() ||
                    mixed->tail_radius.has_value() ||
                    mixed->core_fraction.has_value() ||
+                   mixed->amplitude.has_value() ||
                    !mixed->fitted_pdf.empty()) {
             throw std::logic_error(
                 "HBT analysis state: invalid mixed fit has fabricated output"

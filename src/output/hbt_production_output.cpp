@@ -629,6 +629,7 @@ void write_mixed_shared_fields(
  * @param binning Owning uniform histogram binning used for physical edges.
  * @param parameter Stable physical parameter name.
  * @param estimate Published physical parameter estimate when fully valid.
+ * @param migrad MIGRAD diagnostic associated with this parameter profile.
  * @param minos Matching parameter MINOS diagnostics.
  */
 void write_mixed_row(
@@ -642,6 +643,7 @@ void write_mixed_row(
     const hbt::HistogramBinningConfig& binning,
     const char* parameter,
     const std::optional<hbt::FitParameterEstimate>& estimate,
+    const hbt::MigradDiagnostic& migrad,
     const hbt::MinosDiagnostic& minos
 ) {
     write_identity_fields(
@@ -667,7 +669,7 @@ void write_mixed_row(
         output << ",,";
     }
     write_fit_region_fields(output, fit_region, binning);
-    write_migrad_fields(output, result.selected_migrad);
+    write_migrad_fields(output, migrad);
     write_minos_fields(output, minos);
     write_mixed_shared_fields(output, result);
     output << '\n';
@@ -720,7 +722,7 @@ void write_shape_result(
             distribution << ",gaussian_fit_pdf_pearson";
         }
         if (result.mixed.fully_valid) {
-            // Backward-compatible default curve: Poisson mixed estimator.
+            // Legacy Poisson slot retained for schema compatibility only.
             distribution << ",mixed_fit_pdf";
         }
         if (result.mixed_neyman.fully_valid) {
@@ -816,6 +818,8 @@ void write_shape_result(
             mixed.fully_valid ? mixed.tail_radius : std::nullopt;
         const std::optional<hbt::FitParameterEstimate> core_fraction =
             mixed.fully_valid ? mixed.core_fraction : std::nullopt;
+        const std::optional<hbt::FitParameterEstimate> amplitude =
+            mixed.fully_valid ? mixed.amplitude : std::nullopt;
         write_mixed_row(
             parameters,
             product_index,
@@ -827,6 +831,7 @@ void write_shape_result(
             binning,
             "R_core",
             core_radius,
+            mixed.selected_migrad,
             mixed.minos_core_radius
         );
         write_mixed_row(
@@ -840,6 +845,7 @@ void write_shape_result(
             binning,
             "R_tail",
             tail_radius,
+            mixed.selected_migrad,
             mixed.minos_tail_radius
         );
         write_mixed_row(
@@ -853,7 +859,22 @@ void write_shape_result(
             binning,
             "f_core",
             core_fraction,
+            mixed.selected_migrad,
             mixed.minos_core_fraction
+        );
+        write_mixed_row(
+            parameters,
+            product_index,
+            origin,
+            slice_index,
+            location,
+            mixed,
+            result.region,
+            binning,
+            "A",
+            amplitude,
+            mixed.amplitude_profile_migrad,
+            mixed.minos_amplitude
         );
     }
     require_written(parameters, directory, "fit_parameters.csv");

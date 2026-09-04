@@ -113,27 +113,94 @@ namespace hbt {
 );
 
 /**
- * @brief Return exact-bin probabilities for the normalized mixed model.
+ * @brief Return exact-bin integrals for the unnormalized mixed shape.
  * @param family OSL or radial physical model family.
  * @param binning Validated uniform histogram binning starting at zero.
  * @param region Selected contiguous statistical region.
  * @param core_radius Strictly positive finite Gaussian core radius.
  * @param tail_radius Strictly positive finite exponential tail radius.
- * @param core_fraction Physical mixture fraction in [0,1].
- * @return One normalized mixture probability per selected bin.
+ * @param core_fraction Gaussian mixing coefficient f in [0,1].
+ * @return One non-negative mixed bin integral p_i per selected bin.
  * @throws std::invalid_argument If model evaluation is invalid.
  * @throws std::out_of_range If the region exceeds configured binning.
  *
- * Gaussian and exponential components are normalized independently over the
- * same selected region before mixing.
+ * The returned values use
+ *
+ *   p_i = f * I_G,i(R_core) + (1-f) * I_E,i(R_tail),
+ *
+ * with exact analytic bin-edge component integrals. Neither component is
+ * normalized to unit probability before mixing. A representable zero caused
+ * by far-tail underflow is valid and is preserved as p_i == 0.
  */
-[[nodiscard]] std::vector<double> mixed_bin_probabilities(
+[[nodiscard]] std::vector<double> mixed_bin_integrals(
     FitObservableFamily family,
     const HistogramBinningConfig& binning,
     const StatisticalRegion& region,
     double core_radius,
     double tail_radius,
     double core_fraction
+);
+
+/**
+ * @brief Return the exact Neyman-optimal mixed amplitude for fixed shape.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param region Selected statistical region.
+ * @param bin_integrals Mixed exact-bin p_i values aligned with the region.
+ * @return Positive amplitude A minimizing Neyman chi-square at fixed
+ *         (R_core,R_tail,f).
+ * @throws std::invalid_argument If counts, p_i, or the analytic solution are
+ *         invalid or do not determine a positive amplitude.
+ * @throws std::out_of_range If the selected raw range is unavailable.
+ *
+ * With mu_i = N_selected * A * p_i and Neyman summing only n_i > 0,
+ *
+ *   A = sum p_i / [N_selected * sum(p_i^2 / n_i)],
+ *
+ * where both sums run only over observed bins with n_i > 0.
+ */
+[[nodiscard]] double neyman_optimal_mixed_amplitude(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& bin_integrals
+);
+
+/**
+ * @brief Evaluate Neyman chi-square for unnormalized mixed bin integrals.
+ * @param bins Slot-major raw histogram count storage.
+ * @param offset First raw counter belonging to the logical histogram.
+ * @param region Selected statistical region.
+ * @param bin_integrals Mixed exact-bin p_i values aligned with the region.
+ * @param amplitude Positive mixed amplitude A.
+ * @return chi2_N = sum_{n_i>0} (n_i-mu_i)^2/n_i with
+ *         mu_i=N_selected*A*p_i.
+ * @throws std::invalid_argument If model state or count bookkeeping is invalid.
+ * @throws std::out_of_range If the selected raw range is unavailable.
+ *
+ * p_i == 0 is valid. For an observed bin with n_i > 0 and p_i == 0, the
+ * contribution is exactly n_i. Empty observed bins remain omitted.
+ */
+[[nodiscard]] double binned_neyman_chi_square_from_integrals(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& bin_integrals,
+    double amplitude
+);
+
+/**
+ * @brief Convert mixed bin integrals to the fitted presentation density.
+ * @param bin_integrals Mixed exact-bin p_i values.
+ * @param amplitude Positive fitted amplitude A.
+ * @param binning Owning uniform histogram binning.
+ * @return A*p_i divided by the exact bin width for every selected bin.
+ * @throws std::invalid_argument If the model state is invalid.
+ */
+[[nodiscard]] std::vector<double> mixed_integrals_to_pdf(
+    const std::vector<double>& bin_integrals,
+    double amplitude,
+    const HistogramBinningConfig& binning
 );
 
 /**
@@ -177,8 +244,9 @@ namespace hbt {
  *
  * Expected counts are mu_i = N_fit * normalization * p_i with N_fit equal to
  * the exact selected raw count. Bins with n_i == 0 are omitted, matching the
- * historical SAFA Neyman weighting. Mixed fits use normalization=1; the pure
- * Gaussian may supply a fitted positive normalization.
+ * historical SAFA Neyman weighting. This normalized-probability helper remains
+ * available for generic models; the redesigned mixed fit uses the dedicated
+ * unnormalized-integral Neyman path above.
  */
 [[nodiscard]] double binned_neyman_chi_square(
     const std::vector<std::uint64_t>& bins,

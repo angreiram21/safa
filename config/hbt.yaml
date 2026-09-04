@@ -86,10 +86,11 @@ hbt_histograms:
 # - all: request all three nested origin selections in the same run
 hbt_origin_mode: "all"
 
-# Statistical estimator used for pure-Gaussian and mixed fits.
+# Statistical estimator used for shape fits. The redesigned mixed fit is
+# currently Neyman-only; Poisson/Pearson remain available for the pure Gaussian.
 # Allowed values:
 # - poisson
 # - neyman
 # - pearson
 # - all: execute all three estimators independently
-hbt_fit_estimator: "all"
+hbt_fit_estimator: "neyman"

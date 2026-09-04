@@ -151,7 +151,7 @@ bool verify_analysis_and_output() {
     hbt::RawHistogramSet& global = raw.products[0U].origins[0U].global;
 
     const hbt::StatisticalRegion model_region{0U, 19U, 1U};
-    const std::vector<double> probabilities = hbt::mixed_bin_probabilities(
+    const std::vector<double> mixed_integrals = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::OSL,
         config.histogram_config.osl,
         model_region,
@@ -159,6 +159,15 @@ bool verify_analysis_and_output() {
         2.4,
         0.68
     );
+    double mixed_integral_sum = 0.0;
+    for (const double value : mixed_integrals) {
+        mixed_integral_sum += value;
+    }
+    std::vector<double> probabilities;
+    probabilities.reserve(mixed_integrals.size());
+    for (const double value : mixed_integrals) {
+        probabilities.push_back(value / mixed_integral_sum);
+    }
     const std::vector<std::uint64_t> shape_counts =
         make_counts(probabilities, 800000U);
     for (std::size_t bin = 0U; bin < shape_counts.size(); ++bin) {
@@ -265,12 +274,10 @@ bool verify_analysis_and_output() {
             hbt::GaussianFitResult::kStartCount ||
         low_stat_radial.gaussian_pearson.starts_attempted !=
             hbt::GaussianFitResult::kStartCount ||
-        low_stat_radial.mixed.starts_attempted !=
-            hbt::MixedFitResult::kCoreStartCount ||
+        low_stat_radial.mixed.starts_attempted != 0U ||
         low_stat_radial.mixed_neyman.starts_attempted !=
             hbt::MixedFitResult::kCoreStartCount ||
-        low_stat_radial.mixed_pearson.starts_attempted !=
-            hbt::MixedFitResult::kCoreStartCount) {
+        low_stat_radial.mixed_pearson.starts_attempted != 0U) {
         return fail("radial mT threshold zero did not allow the low-count fits");
     }
 
@@ -352,9 +359,9 @@ bool verify_analysis_and_output() {
     if (valid_distribution.find("gaussian_fit_pdf") == std::string::npos ||
         valid_distribution.find("gaussian_fit_pdf_neyman") == std::string::npos ||
         valid_distribution.find("gaussian_fit_pdf_pearson") == std::string::npos ||
-        valid_distribution.find("mixed_fit_pdf") == std::string::npos ||
         valid_distribution.find("mixed_fit_pdf_neyman") == std::string::npos ||
-        valid_distribution.find("mixed_fit_pdf_pearson") == std::string::npos) {
+        valid_distribution.find("mixed_fit_pdf,") != std::string::npos ||
+        valid_distribution.find("mixed_fit_pdf_pearson") != std::string::npos) {
         std::filesystem::remove_all(root);
         return fail("valid fit curves were not serialized with their PDF");
     }
@@ -382,7 +389,8 @@ bool verify_analysis_and_output() {
     if (invalid_parameters.find("empty_histogram") == std::string::npos ||
         invalid_parameters.find("R_core") == std::string::npos ||
         invalid_parameters.find("R_tail") == std::string::npos ||
-        invalid_parameters.find("f_core") == std::string::npos) {
+        invalid_parameters.find("f_core") == std::string::npos ||
+        invalid_parameters.find(",A,") == std::string::npos) {
         std::filesystem::remove_all(root);
         return fail("invalid fit did not retain explicit model diagnostics");
     }
@@ -392,6 +400,7 @@ bool verify_analysis_and_output() {
         valid_parameters.find("fit_upper_edge") == std::string::npos ||
         valid_parameters.find("R_G_core") == std::string::npos ||
         valid_parameters.find("A_G") == std::string::npos ||
+        valid_parameters.find(",A,") == std::string::npos ||
         valid_parameters.find("estimator") == std::string::npos ||
         valid_parameters.find("poisson") == std::string::npos ||
         valid_parameters.find("neyman") == std::string::npos ||
@@ -472,7 +481,7 @@ bool verify_single_estimator_selection() {
     hbt::RawHistogramState raw = hbt::make_zero_raw_histogram_state(config);
     hbt::RawHistogramSet& global = raw.products[0U].origins[0U].global;
     const hbt::StatisticalRegion model_region{0U, 19U, 1U};
-    const std::vector<double> probabilities = hbt::mixed_bin_probabilities(
+    const std::vector<double> mixed_integrals = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::OSL,
         config.histogram_config.osl,
         model_region,
@@ -480,6 +489,15 @@ bool verify_single_estimator_selection() {
         2.4,
         0.68
     );
+    double mixed_integral_sum = 0.0;
+    for (const double value : mixed_integrals) {
+        mixed_integral_sum += value;
+    }
+    std::vector<double> probabilities;
+    probabilities.reserve(mixed_integrals.size());
+    for (const double value : mixed_integrals) {
+        probabilities.push_back(value / mixed_integral_sum);
+    }
     const std::vector<std::uint64_t> counts =
         make_counts(probabilities, 800000U);
     for (std::size_t bin = 0U; bin < counts.size(); ++bin) {

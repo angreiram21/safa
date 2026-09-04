@@ -50,20 +50,33 @@ namespace hbt {
 );
 
 /**
- * @brief Fit one normalized Gaussian-plus-exponential estimator.
+ * @brief Fit the Neyman Gaussian-plus-exponential model with profiled A.
  * @param family OSL or radial physical model family.
  * @param bins Slot-major raw uint64_t histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated uniform binning for this histogram family.
  * @param region Full selected statistical region used by the mixed model.
- * @param estimator Statistical objective minimized by this independent fit.
+ * @param estimator Must be FitEstimator::Neyman. Other estimators return an
+ *        explicit NotApplicable result for the mixed model.
  * @param gaussian_result Valid full-range free-amplitude Gaussian result from the same estimator;
  *        its fitted radius provides the R_G member of the core-seed set.
  * @param half_maximum_seed Gaussian R seed converted from histogram FWHM.
- * @param core_fraction_policy Origin-dependent physical basin-fraction policy.
- * @return Complete 36-start fit result, terminal start endpoints, and explicit
- *         diagnostics.
+ * @param core_fraction_policy Origin-dependent physical mixing-coefficient basin policy.
+ * @return Complete 36-start fit result, analytic amplitude, terminal start
+ *         endpoints, and explicit diagnostics.
  * @throws std::out_of_range If the selected raw slot is unavailable.
+ *
+ * The mixed exact-bin shape is
+ *
+ *   p_i = f_core I_G,i(R_core) + (1-f_core) I_E,i(R_tail),
+ *   mu_i = N_selected A p_i.
+ *
+ * I_G,i and I_E,i are not normalized independently. f_core is therefore the
+ * bounded Gaussian mixing coefficient, not an integrated probability. For
+ * every MIGRAD tuple (R_core,R_tail,f_core), A is recalculated analytically at
+ * the Neyman minimum; the production search remains three-dimensional. A
+ * separate final explicit-A MINOS profile supplies the asymmetric uncertainty
+ * reported for A. A mixed p_i == 0 is valid under Neyman.
  *
  * The deterministic Cartesian product is
  * R_core={R_G,0.5R_HM,R_HM,2R_HM},

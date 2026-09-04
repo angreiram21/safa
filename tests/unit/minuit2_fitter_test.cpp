@@ -121,7 +121,7 @@ bool verify_gaussian_migrad_and_minos() {
 bool verify_mixed_multistart_and_minos() {
     const hbt::HistogramBinningConfig binning{20U, 0.0, 10.0, 2.0};
     const hbt::StatisticalRegion model_region{0U, 19U, 1U};
-    const std::vector<double> probabilities = hbt::mixed_bin_probabilities(
+    const std::vector<double> p = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::OSL,
         binning,
         model_region,
@@ -129,133 +129,139 @@ bool verify_mixed_multistart_and_minos() {
         2.4,
         0.68
     );
+    double integral_sum = 0.0;
+    for (const double value : p) {
+        integral_sum += value;
+    }
+    if (!std::isfinite(integral_sum) || integral_sum <= 0.0) {
+        return fail("mixed synthetic model has invalid integrated shape");
+    }
+    std::vector<double> normalized;
+    normalized.reserve(p.size());
+    for (const double value : p) {
+        normalized.push_back(value / integral_sum);
+    }
     const std::vector<std::uint64_t> counts =
-        make_counts(probabilities, 800000U);
+        make_counts(normalized, 800000U);
     const hbt::StatisticalRegion region{
         0U,
         19U,
         count_sum(counts)
     };
     const double half_maximum_seed = 0.90;
+    const hbt::FitEstimator estimator = hbt::FitEstimator::Neyman;
 
-    const hbt::FitEstimator estimators[] = {
-        hbt::FitEstimator::Poisson,
-        hbt::FitEstimator::Neyman,
-        hbt::FitEstimator::Pearson
-    };
-    for (const hbt::FitEstimator estimator : estimators) {
-        const hbt::GaussianFitResult gaussian = hbt::fit_gaussian_model(
-            hbt::FitObservableFamily::OSL,
-            counts,
-            0U,
-            binning,
-            region,
-            estimator,
-            half_maximum_seed
+    const hbt::GaussianFitResult gaussian = hbt::fit_gaussian_model(
+        hbt::FitObservableFamily::OSL,
+        counts,
+        0U,
+        binning,
+        region,
+        estimator,
+        half_maximum_seed
+    );
+    if (!gaussian.fully_valid || gaussian.estimator != estimator ||
+        gaussian.starts_attempted != hbt::GaussianFitResult::kStartCount ||
+        gaussian.valid_starts == 0U || !gaussian.selected_start.has_value()) {
+        return fail(
+            "mixed synthetic sample did not provide its Neyman Gaussian anchor"
         );
-        if (!gaussian.fully_valid || gaussian.estimator != estimator ||
-            gaussian.starts_attempted != hbt::GaussianFitResult::kStartCount ||
-            gaussian.valid_starts == 0U || !gaussian.selected_start.has_value()) {
-            return fail(
-                "mixed synthetic sample did not provide its estimator-local Gaussian anchor"
-            );
-        }
-        double gaussian_best = std::numeric_limits<double>::infinity();
-        for (const hbt::MigradDiagnostic& start : gaussian.starts) {
-            if (hbt::fit_failure_from_migrad(start) == hbt::FitFailureReason::None) {
-                gaussian_best = std::min(gaussian_best, start.q_min.value());
-            }
-        }
-        if (!gaussian.q_min.has_value() ||
-            std::fabs(gaussian.q_min.value() - gaussian_best) > 1.0e-10) {
-            return fail("Gaussian estimator did not select its smallest valid q");
-        }
+    }
 
-        const hbt::MixedFitResult mixed = hbt::fit_mixed_model(
-            hbt::FitObservableFamily::OSL,
-            counts,
-            0U,
-            binning,
-            region,
-            estimator,
-            gaussian,
-            half_maximum_seed,
-            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+    const hbt::MixedFitResult mixed = hbt::fit_mixed_model(
+        hbt::FitObservableFamily::OSL,
+        counts,
+        0U,
+        binning,
+        region,
+        estimator,
+        gaussian,
+        half_maximum_seed,
+        hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+    );
+    if (mixed.estimator != estimator) {
+        return fail("mixed result lost its Neyman estimator identity");
+    }
+    if (mixed.starts_attempted != hbt::MixedFitResult::kCoreStartCount ||
+        mixed.valid_starts == 0U ||
+        !mixed.selected_core_start.has_value()) {
+        return fail("mixed Neyman estimator did not execute its 36-start search");
+    }
+    for (const hbt::MigradDiagnostic& start_diag : mixed.starts) {
+        if (!start_diag.attempted) {
+            return fail("mixed Neyman estimator did not attempt all 36 starts");
+        }
+    }
+    const std::size_t selected_index = mixed.selected_core_start.value();
+    if (selected_index >= hbt::MixedFitResult::kCoreStartCount ||
+        hbt::fit_failure_from_migrad(mixed.starts[selected_index]) !=
+            hbt::FitFailureReason::None ||
+        !mixed.start_endpoints[selected_index].core_radius.has_value() ||
+        !mixed.start_endpoints[selected_index].tail_radius.has_value() ||
+        !mixed.start_endpoints[selected_index].core_fraction.has_value() ||
+        !mixed.q_min.has_value() ||
+        hbt::fit_failure_from_migrad(mixed.selected_migrad) !=
+            hbt::FitFailureReason::None ||
+        !mixed.selected_migrad.q_min.has_value() ||
+        std::fabs(
+            mixed.q_min.value() - mixed.selected_migrad.q_min.value()
+        ) > 1.0e-10 ||
+        mixed.consensus_size == 0U) {
+        return fail(
+            "mixed Neyman estimator did not preserve its selected basin"
         );
-        if (mixed.estimator != estimator) {
-            return fail("mixed result lost its estimator identity");
-        }
-        if (mixed.starts_attempted != hbt::MixedFitResult::kCoreStartCount ||
-            mixed.valid_starts == 0U ||
-            !mixed.selected_core_start.has_value()) {
-            return fail("mixed estimator did not execute its 36-start search");
-        }
-        for (const hbt::MigradDiagnostic& start : mixed.starts) {
-            if (!start.attempted) {
-                return fail("mixed estimator did not attempt all 36 starts");
-            }
-        }
-        const std::size_t selected_index = mixed.selected_core_start.value();
-        if (selected_index >= hbt::MixedFitResult::kCoreStartCount ||
-            hbt::fit_failure_from_migrad(mixed.starts[selected_index]) !=
-                hbt::FitFailureReason::None ||
-            !mixed.start_endpoints[selected_index].core_radius.has_value() ||
-            !mixed.start_endpoints[selected_index].tail_radius.has_value() ||
-            !mixed.start_endpoints[selected_index].core_fraction.has_value() ||
-            !mixed.q_min.has_value() ||
-            hbt::fit_failure_from_migrad(mixed.selected_migrad) !=
-                hbt::FitFailureReason::None ||
-            !mixed.selected_migrad.q_min.has_value() ||
-            std::fabs(
-                mixed.q_min.value() - mixed.selected_migrad.q_min.value()
-            ) > 1.0e-10 ||
-            mixed.consensus_size == 0U) {
-            return fail(
-                "mixed estimator did not preserve and polish its selected non-degenerate basin"
-            );
-        }
-        if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
-            !mixed.tail_radius.has_value() ||
-            !mixed.core_fraction.has_value() ||
-            !mixed.minos_core_radius.attempted ||
-            !mixed.minos_tail_radius.attempted ||
-            !mixed.minos_core_fraction.attempted ||
-            !mixed.minos_core_radius.lower_valid ||
-            !mixed.minos_core_radius.upper_valid ||
-            !mixed.minos_tail_radius.lower_valid ||
-            !mixed.minos_tail_radius.upper_valid ||
-            !mixed.minos_core_fraction.lower_valid ||
-            !mixed.minos_core_fraction.upper_valid) {
-            return fail(
-                "selected mixed estimator minimum did not pass required MINOS"
-            );
-        }
-        const hbt::MixedStartEndpointDiagnostic& selected_endpoint =
-            mixed.start_endpoints[selected_index];
-        if (std::fabs(std::log(
-                selected_endpoint.core_radius.value() /
-                mixed.core_radius->value
-            )) > hbt::kMixedBasinLogRadiusTolerance ||
-            std::fabs(std::log(
-                selected_endpoint.tail_radius.value() /
-                mixed.tail_radius->value
-            )) > hbt::kMixedBasinLogRadiusTolerance ||
-            std::fabs(
-                selected_endpoint.core_fraction.value() -
-                mixed.core_fraction->value
-            ) > hbt::kMixedBasinCoreFractionTolerance) {
-            return fail(
-                "post-selection MIGRAD polishing left the selected mixed basin"
-            );
-        }
-        if (!(mixed.core_fraction->value >
-                  hbt::kMixedPhysicalCoreFractionMin &&
-              mixed.core_fraction->value <
-                  hbt::kMixedPhysicalCoreFractionMax)) {
-            return fail(
-                "mixed estimator published a basin outside the physical f_core interval"
-            );
-        }
+    }
+    if (!mixed.fully_valid || !mixed.core_radius.has_value() ||
+        !mixed.tail_radius.has_value() ||
+        !mixed.core_fraction.has_value() || !mixed.amplitude.has_value() ||
+        !mixed.minos_core_radius.attempted ||
+        !mixed.minos_tail_radius.attempted ||
+        !mixed.minos_core_fraction.attempted ||
+        !mixed.minos_amplitude.attempted ||
+        hbt::fit_failure_from_migrad(mixed.amplitude_profile_migrad) !=
+            hbt::FitFailureReason::None ||
+        !mixed.minos_core_radius.lower_valid ||
+        !mixed.minos_core_radius.upper_valid ||
+        !mixed.minos_tail_radius.lower_valid ||
+        !mixed.minos_tail_radius.upper_valid ||
+        !mixed.minos_core_fraction.lower_valid ||
+        !mixed.minos_core_fraction.upper_valid ||
+        !mixed.minos_amplitude.lower_valid ||
+        !mixed.minos_amplitude.upper_valid) {
+        return fail(
+            "selected mixed Neyman minimum did not pass required profiles"
+        );
+    }
+    if (mixed.amplitude->value <= 0.0 ||
+        mixed.amplitude->lower_error < 0.0 ||
+        mixed.amplitude->upper_error < 0.0) {
+        return fail("mixed analytic amplitude/profile interval is invalid");
+    }
+    const hbt::MixedStartEndpointDiagnostic& selected_endpoint =
+        mixed.start_endpoints[selected_index];
+    if (std::fabs(std::log(
+            selected_endpoint.core_radius.value() /
+            mixed.core_radius->value
+        )) > hbt::kMixedBasinLogRadiusTolerance ||
+        std::fabs(std::log(
+            selected_endpoint.tail_radius.value() /
+            mixed.tail_radius->value
+        )) > hbt::kMixedBasinLogRadiusTolerance ||
+        std::fabs(
+            selected_endpoint.core_fraction.value() -
+            mixed.core_fraction->value
+        ) > hbt::kMixedBasinCoreFractionTolerance) {
+        return fail(
+            "post-selection MIGRAD polishing left the selected mixed basin"
+        );
+    }
+    if (!(mixed.core_fraction->value >
+              hbt::kMixedPhysicalCoreFractionMin &&
+          mixed.core_fraction->value <
+              hbt::kMixedPhysicalCoreFractionMax)) {
+        return fail(
+            "mixed Neyman estimator published f_core outside policy"
+        );
     }
     return true;
 }
@@ -437,7 +443,7 @@ bool verify_insufficient_bins_are_reported() {
         0U,
         binning,
         three_bins,
-        hbt::FitEstimator::Poisson,
+        hbt::FitEstimator::Neyman,
         gaussian,
         1.0,
         hbt::MixedCoreFractionPolicy::RequireCoreAndTail

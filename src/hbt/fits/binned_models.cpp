@@ -482,6 +482,85 @@ double component_weight(
 }
 
 /**
+ * @brief Evaluate one exact component integral while permitting underflow zero.
+ * @param family OSL or radial physical family.
+ * @param lower Non-negative lower edge.
+ * @param upper Strictly larger upper edge.
+ * @param radius Strictly positive finite radius.
+ * @param gaussian true for Gaussian, false for exponential.
+ * @return Finite non-negative exact integral. A far-tail underflow to zero is
+ *         retained instead of being promoted to an invalid model state.
+ */
+double component_integral_allow_zero(
+    FitObservableFamily family,
+    double lower,
+    double upper,
+    double radius,
+    bool gaussian
+) {
+    require_integral_inputs(lower, upper, radius);
+
+    double result = 0.0;
+    if (gaussian) {
+        switch (family) {
+            case FitObservableFamily::OSL:
+                if (upper / (2.0 * radius) <= kSeriesScaledEdge) {
+                    result = gaussian_large_radius_series(
+                        lower, upper, radius, 0U
+                    );
+                } else {
+                    const double pi = std::acos(-1.0);
+                    result = radius * std::sqrt(pi) *
+                        osl_gaussian_weight(lower, upper, radius);
+                }
+                break;
+            case FitObservableFamily::Radial:
+                if (upper / (2.0 * radius) <= kSeriesScaledEdge) {
+                    result = gaussian_large_radius_series(
+                        lower, upper, radius, 2U
+                    );
+                } else {
+                    const double radius3 = radius * radius * radius;
+                    result = 8.0 * radius3 *
+                        radial_gaussian_weight(lower, upper, radius);
+                }
+                break;
+        }
+    } else {
+        switch (family) {
+            case FitObservableFamily::OSL:
+                if (upper / radius <= kSeriesScaledEdge) {
+                    result = exponential_large_radius_series(
+                        lower, upper, radius, 0U
+                    );
+                } else {
+                    result = radius *
+                        osl_exponential_weight(lower, upper, radius);
+                }
+                break;
+            case FitObservableFamily::Radial:
+                if (upper / radius <= kSeriesScaledEdge) {
+                    result = exponential_large_radius_series(
+                        lower, upper, radius, 2U
+                    );
+                } else {
+                    const double radius3 = radius * radius * radius;
+                    result = radius3 *
+                        radial_exponential_weight(lower, upper, radius);
+                }
+                break;
+        }
+    }
+
+    if (!std::isfinite(result) || result < 0.0) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid mixed component integral"
+        );
+    }
+    return result;
+}
+
+/**
  * @brief Normalize non-negative exact-bin component weights.
  * @param weights Finite non-negative per-bin component weights.
  * @param require_positive Whether every normalized bin must be positive.
@@ -763,7 +842,7 @@ std::vector<double> gaussian_bin_probabilities(
     );
 }
 
-std::vector<double> mixed_bin_probabilities(
+std::vector<double> mixed_bin_integrals(
     FitObservableFamily family,
     const HistogramBinningConfig& binning,
     const StatisticalRegion& region,
@@ -774,61 +853,229 @@ std::vector<double> mixed_bin_probabilities(
     if (!std::isfinite(core_fraction) || core_fraction < 0.0 ||
         core_fraction > 1.0) {
         throw std::invalid_argument(
-            "HBT analysis model: core fraction is outside [0,1]"
+            "HBT analysis model: Gaussian mixing coefficient is outside [0,1]"
         );
     }
 
-    if (core_fraction == 1.0) {
-        return component_probabilities(
-            family,
-            binning,
-            region,
-            core_radius,
-            true,
-            true
-        );
-    }
-    if (core_fraction == 0.0) {
-        return component_probabilities(
-            family,
-            binning,
-            region,
-            tail_radius,
-            false,
-            true
+    require_region(binning, region);
+    if (!std::isfinite(core_radius) || core_radius <= 0.0 ||
+        !std::isfinite(tail_radius) || tail_radius <= 0.0) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid mixed-model radius"
         );
     }
 
-    const std::vector<double> gaussian = component_probabilities(
-        family,
-        binning,
-        region,
-        core_radius,
-        true,
-        false
-    );
-    const std::vector<double> exponential = component_probabilities(
-        family,
-        binning,
-        region,
-        tail_radius,
-        false,
-        false
-    );
-
-    std::vector<double> probabilities;
-    probabilities.reserve(gaussian.size());
-    for (std::size_t index = 0U; index < gaussian.size(); ++index) {
-        const double probability = core_fraction * gaussian[index] +
-            (1.0 - core_fraction) * exponential[index];
-        if (!std::isfinite(probability) || probability <= 0.0) {
+    std::vector<double> integrals;
+    integrals.reserve(region.last_bin - region.first_bin + 1U);
+    for (std::size_t bin = region.first_bin;
+         bin <= region.last_bin;
+         ++bin) {
+        const double lower = histogram_bin_lower_edge(binning, bin);
+        const double upper = histogram_bin_upper_edge(binning, bin);
+        const double gaussian = component_integral_allow_zero(
+            family, lower, upper, core_radius, true
+        );
+        const double exponential = component_integral_allow_zero(
+            family, lower, upper, tail_radius, false
+        );
+        const double integral = core_fraction * gaussian +
+            (1.0 - core_fraction) * exponential;
+        if (!std::isfinite(integral) || integral < 0.0) {
             throw std::invalid_argument(
-                "HBT analysis model: invalid mixed-model bin probability"
+                "HBT analysis model: invalid mixed-model bin integral"
             );
         }
-        probabilities.push_back(probability);
+        integrals.push_back(integral);
     }
-    return probabilities;
+    return integrals;
+}
+
+namespace {
+
+/**
+ * @brief Validate unnormalized mixed-integral Neyman inputs.
+ * @return Number of selected bins after count and model checks.
+ */
+std::size_t validate_mixed_neyman_inputs(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& bin_integrals
+) {
+    const std::size_t selected_bins =
+        region.last_bin - region.first_bin + 1U;
+    if (bin_integrals.size() != selected_bins) {
+        throw std::invalid_argument(
+            "HBT mixed Neyman: bin-integral cardinality mismatch"
+        );
+    }
+    if (offset > bins.size() ||
+        region.first_bin > region.last_bin ||
+        region.first_bin > bins.size() - offset ||
+        selected_bins > bins.size() - offset - region.first_bin) {
+        throw std::out_of_range(
+            "HBT mixed Neyman: selected raw histogram range is unavailable"
+        );
+    }
+    if (region.selected_count == 0U) {
+        throw std::invalid_argument(
+            "HBT mixed Neyman: selected count is zero"
+        );
+    }
+
+    std::uint64_t raw_sum = 0U;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        if (raw > std::numeric_limits<std::uint64_t>::max() - raw_sum) {
+            throw std::overflow_error(
+                "HBT mixed Neyman: selected raw count overflow"
+            );
+        }
+        raw_sum += raw;
+        if (!std::isfinite(bin_integrals[index]) ||
+            bin_integrals[index] < 0.0) {
+            throw std::invalid_argument(
+                "HBT mixed Neyman: invalid mixed bin integral"
+            );
+        }
+    }
+    if (raw_sum != region.selected_count) {
+        throw std::invalid_argument(
+            "HBT mixed Neyman: selected count differs from raw counts"
+        );
+    }
+    return selected_bins;
+}
+
+}  // namespace
+
+double neyman_optimal_mixed_amplitude(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& bin_integrals
+) {
+    const std::size_t selected_bins = validate_mixed_neyman_inputs(
+        bins, offset, region, bin_integrals
+    );
+
+    long double numerator = 0.0L;
+    long double denominator = 0.0L;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        if (raw == 0U) {
+            continue;
+        }
+        const long double integral = static_cast<long double>(
+            bin_integrals[index]
+        );
+        numerator += integral;
+        denominator += integral * integral /
+            static_cast<long double>(raw);
+    }
+
+    const long double selected_count = static_cast<long double>(
+        region.selected_count
+    );
+    if (!std::isfinite(numerator) || !std::isfinite(denominator) ||
+        numerator <= 0.0L || denominator <= 0.0L) {
+        throw std::invalid_argument(
+            "HBT mixed Neyman: analytic amplitude is undefined"
+        );
+    }
+    const long double amplitude =
+        numerator / (selected_count * denominator);
+    const double result = static_cast<double>(amplitude);
+    if (!std::isfinite(result) || result <= 0.0) {
+        throw std::invalid_argument(
+            "HBT mixed Neyman: analytic amplitude is invalid"
+        );
+    }
+    return result;
+}
+
+double binned_neyman_chi_square_from_integrals(
+    const std::vector<std::uint64_t>& bins,
+    std::size_t offset,
+    const StatisticalRegion& region,
+    const std::vector<double>& bin_integrals,
+    double amplitude
+) {
+    if (!std::isfinite(amplitude) || amplitude <= 0.0) {
+        throw std::invalid_argument(
+            "HBT mixed Neyman: invalid model amplitude"
+        );
+    }
+    const std::size_t selected_bins = validate_mixed_neyman_inputs(
+        bins, offset, region, bin_integrals
+    );
+    const long double scale = static_cast<long double>(region.selected_count) *
+        static_cast<long double>(amplitude);
+    long double chi_square = 0.0L;
+    for (std::size_t index = 0U; index < selected_bins; ++index) {
+        const std::uint64_t raw = bins[offset + region.first_bin + index];
+        if (raw == 0U) {
+            continue;
+        }
+        const long double observed = static_cast<long double>(raw);
+        const long double expected = scale *
+            static_cast<long double>(bin_integrals[index]);
+        if (!std::isfinite(expected) || expected < 0.0L) {
+            throw std::invalid_argument(
+                "HBT mixed Neyman: invalid expected count"
+            );
+        }
+        const long double residual = observed - expected;
+        chi_square += residual * residual / observed;
+        if (!std::isfinite(chi_square)) {
+            throw std::invalid_argument(
+                "HBT mixed Neyman: non-finite objective evaluation"
+            );
+        }
+    }
+    const double result = static_cast<double>(chi_square);
+    if (!std::isfinite(result)) {
+        throw std::invalid_argument(
+            "HBT mixed Neyman: objective exceeds representable range"
+        );
+    }
+    return result;
+}
+
+std::vector<double> mixed_integrals_to_pdf(
+    const std::vector<double>& bin_integrals,
+    double amplitude,
+    const HistogramBinningConfig& binning
+) {
+    if (!std::isfinite(amplitude) || amplitude <= 0.0) {
+        throw std::invalid_argument(
+            "HBT mixed model: invalid fitted amplitude"
+        );
+    }
+    const double width = 1.0 / binning.inverse_bin_width;
+    std::vector<double> densities;
+    densities.reserve(bin_integrals.size());
+    for (const double integral : bin_integrals) {
+        if (!std::isfinite(integral) || integral < 0.0) {
+            throw std::invalid_argument(
+                "HBT mixed model: invalid bin integral for fitted density"
+            );
+        }
+        const long double density =
+            static_cast<long double>(amplitude) *
+            static_cast<long double>(integral) /
+            static_cast<long double>(width);
+        if (!std::isfinite(density) ||
+            density > static_cast<long double>(
+                std::numeric_limits<double>::max()
+            )) {
+            throw std::invalid_argument(
+                "HBT mixed model: non-finite fitted density"
+            );
+        }
+        densities.push_back(static_cast<double>(density));
+    }
+    return densities;
 }
 
 double binned_poisson_deviance(

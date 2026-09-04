@@ -115,9 +115,12 @@ MixedFitResult invalid_mixed(
         0U,
         std::nullopt,
         empty,
+        empty,
         unattempted_minos(),
         unattempted_minos(),
         unattempted_minos(),
+        unattempted_minos(),
+        std::nullopt,
         std::nullopt,
         std::nullopt,
         std::nullopt,
@@ -302,12 +305,13 @@ private:
 };
 
 /**
- * @brief Minuit2 objective for one normalized mixed-model estimator.
+ * @brief Three-parameter Neyman objective for the mixed shape.
  *
- * Parameter order is log(R_core), log(R_tail), f_core. The model probability
- * calculation is identical for every estimator; only the scalar objective
- * applied to the same raw counts and expected counts changes. Borrowed
- * references are retained only during one synchronous fit invocation.
+ * Parameter order is log(R_core), log(R_tail), f_core. For every tuple the
+ * exact unnormalized mixed bin integrals p_i are evaluated and the positive
+ * amplitude A is recalculated analytically at the Neyman minimum before the
+ * objective is returned. Borrowed references are retained only during one
+ * synchronous fit invocation.
  */
 class MixedObjective final : public ROOT::Minuit2::FCNBase {
 public:
@@ -318,22 +322,19 @@ public:
      * @param offset First logical histogram counter.
      * @param binning Borrowed validated uniform binning.
      * @param region Selected contiguous statistical region, copied by value.
-     * @param estimator Statistical objective evaluated for this fit only.
      */
     MixedObjective(
         FitObservableFamily family,
         const std::vector<std::uint64_t>& bins,
         std::size_t offset,
         const HistogramBinningConfig& binning,
-        StatisticalRegion region,
-        FitEstimator estimator
+        StatisticalRegion region
     )
         : family_(family),
           bins_(bins),
           offset_(offset),
           binning_(binning),
-          region_(region),
-          estimator_(estimator) {}
+          region_(region) {}
 
     /**
      * @brief Evaluate the configured objective from mixed-model parameters.
@@ -348,7 +349,7 @@ public:
         const double core_radius = std::exp(parameters[0]);
         const double tail_radius = std::exp(parameters[1]);
         try {
-            const std::vector<double> probabilities = mixed_bin_probabilities(
+            const std::vector<double> bin_integrals = mixed_bin_integrals(
                 family_,
                 binning_,
                 region_,
@@ -356,30 +357,20 @@ public:
                 tail_radius,
                 parameters[2]
             );
-            switch (estimator_) {
-                case FitEstimator::Poisson:
-                    return binned_poisson_deviance(
-                        bins_, offset_, region_, probabilities
-                    );
-                case FitEstimator::Neyman:
-                    return binned_neyman_chi_square(
-                        bins_, offset_, region_, probabilities
-                    );
-                case FitEstimator::Pearson:
-                    return binned_pearson_chi_square(
-                        bins_, offset_, region_, probabilities
-                    );
-            }
+            const double amplitude = neyman_optimal_mixed_amplitude(
+                bins_, offset_, region_, bin_integrals
+            );
+            return binned_neyman_chi_square_from_integrals(
+                bins_, offset_, region_, bin_integrals, amplitude
+            );
         } catch (const std::exception&) {
             return std::numeric_limits<double>::max();
         }
-        return std::numeric_limits<double>::max();
     }
 
     /**
-     * @brief Return the MINOS error definition for every supported objective.
-     * @return Exactly 1.0, corresponding to Delta(-2 log L)=1 for Poisson and
-     *         Delta(chi-square)=1 for the two chi-square estimators.
+     * @brief Return the MINOS error definition for Neyman chi-square.
+     * @return Exactly 1.0, corresponding to Delta(chi-square)=1.
      */
     double Up() const override {
         return 1.0;
@@ -391,7 +382,65 @@ private:
     std::size_t offset_; ///< First logical raw counter.
     const HistogramBinningConfig& binning_; ///< Borrowed binning metadata.
     StatisticalRegion region_; ///< Selected region copied by value.
-    FitEstimator estimator_; ///< Objective used only by this independent fit.
+};
+
+/**
+ * @brief Four-parameter Neyman objective used only for the final A profile.
+ *
+ * The production mixed search never fits A numerically. This explicit
+ * log-amplitude coordinate exists solely so MINOS can profile A while varying
+ * R_core, R_tail, and f_core after the analytically profiled 3D minimum has
+ * been selected.
+ */
+class MixedAmplitudeProfileObjective final : public ROOT::Minuit2::FCNBase {
+public:
+    MixedAmplitudeProfileObjective(
+        FitObservableFamily family,
+        const std::vector<std::uint64_t>& bins,
+        std::size_t offset,
+        const HistogramBinningConfig& binning,
+        StatisticalRegion region
+    )
+        : family_(family),
+          bins_(bins),
+          offset_(offset),
+          binning_(binning),
+          region_(region) {}
+
+    double operator()(const std::vector<double>& parameters) const override {
+        if (parameters.size() != 4U) {
+            return std::numeric_limits<double>::max();
+        }
+        const double core_radius = std::exp(parameters[0]);
+        const double tail_radius = std::exp(parameters[1]);
+        const double amplitude = std::exp(parameters[3]);
+        try {
+            const std::vector<double> bin_integrals = mixed_bin_integrals(
+                family_,
+                binning_,
+                region_,
+                core_radius,
+                tail_radius,
+                parameters[2]
+            );
+            return binned_neyman_chi_square_from_integrals(
+                bins_, offset_, region_, bin_integrals, amplitude
+            );
+        } catch (const std::exception&) {
+            return std::numeric_limits<double>::max();
+        }
+    }
+
+    double Up() const override {
+        return 1.0;
+    }
+
+private:
+    FitObservableFamily family_;
+    const std::vector<std::uint64_t>& bins_;
+    std::size_t offset_;
+    const HistogramBinningConfig& binning_;
+    StatisticalRegion region_;
 };
 
 /**
@@ -486,6 +535,28 @@ bool mixed_minimum_is_evaluable(
 }
 
 /**
+ * @brief Test whether one explicit-amplitude profile minimum is evaluable.
+ */
+bool mixed_amplitude_profile_minimum_is_evaluable(
+    const MixedAmplitudeProfileObjective& objective,
+    const FunctionMinimum& minimum
+) {
+    try {
+        const std::vector<double> parameters{
+            minimum.UserState().Value(0U),
+            minimum.UserState().Value(1U),
+            minimum.UserState().Value(2U),
+            minimum.UserState().Value(3U)
+        };
+        const double value = objective(parameters);
+        return std::isfinite(value) &&
+            value != std::numeric_limits<double>::max();
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+/**
  * @brief Transform MINOS log-radius errors into physical R-space distances.
  * @param log_radius Central fitted log radius.
  * @param error Fully valid MINOS result for log radius.
@@ -569,7 +640,7 @@ struct GaussianStartOutcome {
  * @param objective Borrowed synchronous Minuit objective.
  * @param core_seed Strictly positive Gaussian core radius seed.
  * @param tail_seed Strictly positive exponential tail radius seed.
- * @param core_fraction_seed Initial Gaussian mixture fraction in (0,1).
+ * @param core_fraction_seed Initial Gaussian mixing coefficient in (0,1).
  * @return FunctionMinimum plus its stable diagnostic.
  *
  * Numerical parameter steps are Minuit controls, not scientific configuration.
@@ -590,6 +661,41 @@ std::pair<FunctionMinimum, MigradDiagnostic> run_mixed_migrad(
     FunctionMinimum minimum = migrad();
     const bool objective_failure =
         !mixed_minimum_is_evaluable(objective, minimum);
+    return {
+        minimum,
+        migrad_diagnostic(minimum, objective_failure)
+    };
+}
+
+/**
+ * @brief Build the explicit four-parameter state used only for the A profile.
+ * @param objective Explicit-amplitude Neyman objective.
+ * @param core_radius Final positive R_core from the 3D profiled search.
+ * @param tail_radius Final positive R_tail from the 3D profiled search.
+ * @param core_fraction Final mixing coefficient in (0,1).
+ * @param amplitude Analytic positive A at the same 3D minimum.
+ * @return Fresh 4D MIGRAD minimum plus stable diagnostics.
+ *
+ * The starting point is already the exact conditional minimum in A. This
+ * auxiliary 4D state is never used for basin selection or central shape
+ * parameters; it exists only so MINOS can profile the final amplitude.
+ */
+std::pair<FunctionMinimum, MigradDiagnostic> run_mixed_amplitude_profile_migrad(
+    MixedAmplitudeProfileObjective& objective,
+    double core_radius,
+    double tail_radius,
+    double core_fraction,
+    double amplitude
+) {
+    MnUserParameters parameters;
+    parameters.Add("log_r_core", std::log(core_radius), 0.1);
+    parameters.Add("log_r_tail", std::log(tail_radius), 0.1);
+    parameters.Add("f_core", core_fraction, 0.05, 0.0, 1.0);
+    parameters.Add("log_A", std::log(amplitude), 0.1);
+    MnMigrad migrad(objective, parameters);
+    FunctionMinimum minimum = migrad();
+    const bool objective_failure =
+        !mixed_amplitude_profile_minimum_is_evaluable(objective, minimum);
     return {
         minimum,
         migrad_diagnostic(minimum, objective_failure)
@@ -825,9 +931,12 @@ MixedFitResult fit_mixed_model(
     double half_maximum_seed,
     MixedCoreFractionPolicy core_fraction_policy
 ) {
+    if (estimator != FitEstimator::Neyman) {
+        return invalid_mixed(FitFailureReason::NotApplicable, estimator);
+    }
     const std::size_t selected_bins =
         region.last_bin - region.first_bin + 1U;
-    if (selected_bins < 4U || region.selected_count == 0U) {
+    if (selected_bins < 5U || region.selected_count == 0U) {
         return invalid_mixed(FitFailureReason::InsufficientBins, estimator);
     }
     if (gaussian_result.estimator != estimator ||
@@ -882,7 +991,7 @@ MixedFitResult fit_mixed_model(
         for (const double tail_scale : tail_scales) {
             for (const double fraction : fractions) {
                 MixedObjective objective(
-                    family, bins, offset, binning, region, estimator
+                    family, bins, offset, binning, region
                 );
                 auto start = run_mixed_migrad(
                     objective,
@@ -962,13 +1071,16 @@ MixedFitResult fit_mixed_model(
         MixedFitResult candidate = result;
         candidate.selected_core_start = candidate_start;
         candidate.selected_migrad = unattempted_migrad();
+        candidate.amplitude_profile_migrad = unattempted_migrad();
         candidate.minos_core_radius = unattempted_minos();
         candidate.minos_tail_radius = unattempted_minos();
         candidate.minos_core_fraction = unattempted_minos();
+        candidate.minos_amplitude = unattempted_minos();
         candidate.q_min = std::nullopt;
         candidate.core_radius = std::nullopt;
         candidate.tail_radius = std::nullopt;
         candidate.core_fraction = std::nullopt;
+        candidate.amplitude = std::nullopt;
         candidate.fitted_pdf.clear();
         candidate.fully_valid = false;
         candidate.failure_reason = FitFailureReason::MigradInvalid;
@@ -997,7 +1109,7 @@ MixedFitResult fit_mixed_model(
         }
 
         MixedObjective selected_objective(
-            family, bins, offset, binning, region, estimator
+            family, bins, offset, binning, region
         );
         auto polished = run_mixed_migrad(
             selected_objective,
@@ -1034,15 +1146,19 @@ MixedFitResult fit_mixed_model(
             return candidate;
         }
 
-        std::vector<double> probabilities;
+        std::vector<double> bin_integrals;
+        double amplitude = 0.0;
         try {
-            probabilities = mixed_bin_probabilities(
+            bin_integrals = mixed_bin_integrals(
                 family,
                 binning,
                 region,
                 core_radius,
                 tail_radius,
                 core_fraction
+            );
+            amplitude = neyman_optimal_mixed_amplitude(
+                bins, offset, region, bin_integrals
             );
         } catch (const std::exception&) {
             candidate.failure_reason = FitFailureReason::ObjectiveEvaluation;
@@ -1091,6 +1207,54 @@ MixedFitResult fit_mixed_model(
             return candidate;
         }
 
+        MixedAmplitudeProfileObjective amplitude_profile_objective(
+            family, bins, offset, binning, region
+        );
+        auto amplitude_profile = run_mixed_amplitude_profile_migrad(
+            amplitude_profile_objective,
+            core_radius,
+            tail_radius,
+            core_fraction,
+            amplitude
+        );
+        candidate.amplitude_profile_migrad = amplitude_profile.second;
+        const FitFailureReason amplitude_profile_migrad_reason =
+            fit_failure_from_migrad(candidate.amplitude_profile_migrad);
+        if (amplitude_profile_migrad_reason != FitFailureReason::None) {
+            candidate.failure_reason = amplitude_profile_migrad_reason;
+            return candidate;
+        }
+
+        FunctionMinimum& amplitude_profile_minimum = amplitude_profile.first;
+        const MixedBasinPoint profile_endpoint{
+            amplitude_profile_minimum.UserState().Value(0U),
+            amplitude_profile_minimum.UserState().Value(1U),
+            amplitude_profile_minimum.UserState().Value(2U)
+        };
+        const MixedBasinPoint selected_endpoint{
+            log_core,
+            log_tail,
+            core_fraction
+        };
+        if (!same_mixed_basin(profile_endpoint, selected_endpoint)) {
+            candidate.failure_reason = FitFailureReason::MigradInvalid;
+            return candidate;
+        }
+        MnMinos amplitude_minos(
+            amplitude_profile_objective,
+            amplitude_profile_minimum
+        );
+        const MinosError amplitude_error = amplitude_minos.Minos(3U);
+        candidate.minos_amplitude = minos_diagnostic(amplitude_error);
+        minos_reason = fit_failure_from_minos(
+            candidate.minos_amplitude,
+            false
+        );
+        if (minos_reason != FitFailureReason::None) {
+            candidate.failure_reason = minos_reason;
+            return candidate;
+        }
+
         try {
             candidate.core_radius = physical_radius_estimate(
                 log_core,
@@ -1104,14 +1268,37 @@ MixedFitResult fit_mixed_model(
                 core_fraction,
                 fraction_error
             );
-            candidate.fitted_pdf = probabilities_to_pdf(
-                probabilities,
+            const double profile_log_amplitude =
+                amplitude_profile_minimum.UserState().Value(3U);
+            const double lower_amplitude = std::exp(
+                profile_log_amplitude + amplitude_error.Lower()
+            );
+            const double upper_amplitude = std::exp(
+                profile_log_amplitude + amplitude_error.Upper()
+            );
+            if (!std::isfinite(amplitude) || amplitude <= 0.0 ||
+                !std::isfinite(lower_amplitude) || lower_amplitude <= 0.0 ||
+                !std::isfinite(upper_amplitude) || upper_amplitude <= 0.0 ||
+                lower_amplitude > amplitude || upper_amplitude < amplitude) {
+                throw std::invalid_argument(
+                    "HBT mixed fit: invalid amplitude profile interval"
+                );
+            }
+            candidate.amplitude = FitParameterEstimate{
+                amplitude,
+                amplitude - lower_amplitude,
+                upper_amplitude - amplitude
+            };
+            candidate.fitted_pdf = mixed_integrals_to_pdf(
+                bin_integrals,
+                amplitude,
                 binning
             );
         } catch (const std::exception&) {
             candidate.core_radius = std::nullopt;
             candidate.tail_radius = std::nullopt;
             candidate.core_fraction = std::nullopt;
+            candidate.amplitude = std::nullopt;
             candidate.fitted_pdf.clear();
             candidate.failure_reason = FitFailureReason::NonFiniteMinimum;
             return candidate;

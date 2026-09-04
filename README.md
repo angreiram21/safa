@@ -610,8 +610,8 @@ partition of `valid`.
 
 ### Fit estimator mode
 
-`hbt_fit_estimator` controls which independent statistical fit estimator is
-executed for both pure-Gaussian and mixed fits. Accepted values are:
+`hbt_fit_estimator` controls which statistical fit estimator is executed.
+Accepted values are:
 
 ```text
 poisson
@@ -622,9 +622,11 @@ all
 
 Selecting one estimator skips MIGRAD and MINOS completely for the other two.
 Their result slots remain present as explicit `NotApplicable` placeholders so
-the derived-state and CSV schemas stay stable. `all` preserves the historical
-behavior and runs Poisson, Neyman, and Pearson independently. Each mixed fit
-continues to use the pure-Gaussian `R_G` obtained with the same estimator.
+the derived-state and CSV schemas stay stable. The pure Gaussian continues to
+support Poisson, Neyman, and Pearson independently. The redesigned mixed model
+is fitted with Neyman only; its Poisson and Pearson result slots remain explicit
+`NotApplicable` placeholders. Production `config/hbt.yaml` therefore selects
+`neyman`.
 
 ## Current event-preparation pipeline
 
@@ -909,18 +911,27 @@ No 5%/10% Gaussian-core threshold is applied. Raw counts are never smoothed in
 the likelihood. PAVA is retained only for the independent half-maximum radius
 seed `R_HM`.
 
-For the mixed model, the Gaussian and exponential components are normalized
-independently to unit probability over the selected region and combined as
-`f_core * Gaussian + (1 - f_core) * tail`; mixed fits retain fixed total
-normalization `mu_i = N_selected * p_i`. The pure Gaussian is different: its
+For the mixed model, the Gaussian and exponential components are not normalized
+independently. Exact bin integrals are combined directly as
+
+```text
+p_i = f_core * I_G,i(R_core) + (1 - f_core) * I_E,i(R_tail)
+mu_i = N_selected * A * p_i
+```
+
+Here `f_core` is the bounded Gaussian mixing coefficient, not an integrated
+probability or pair fraction. For every `(R_core,R_tail,f_core)` tuple tested by
+MIGRAD, the positive amplitude `A` is recalculated analytically at the Neyman
+minimum, so the production mixed search remains three-dimensional. The pure
+Gaussian is different only in how its amplitude is minimized: its
 expected count in bin `i` is evaluated directly as
 `mu_i = N_selected * A_G * integral_i[G(R_G)]`, with no unit-sum normalization
 of the Gaussian bin integrals. Far-tail Gaussian integrals and expected counts
 are evaluated logarithmically, so physically non-zero contributions below the
-normal `double` range do not invalidate the fit. Poisson, Neyman and Pearson
-remain independent estimators. Neyman deliberately omits observed zero-count
-bins, matching the historical weighting used for the R_core(mT) comparison;
-Pearson and Poisson retain their existing zero-bin conventions.
+normal `double` range do not invalidate the fit. Neyman deliberately omits
+observed zero-count bins, matching the historical weighting used for the
+R_core(mT) comparison. For the mixed model, a representable far-tail `p_i == 0`
+is valid; if `n_i > 0`, that bin contributes exactly `n_i` to Neyman chi-square.
 
 ### ROOT/Minuit2 fitting
 
@@ -940,14 +951,16 @@ radius; raw counts, `N_selected`, and fit regions are unchanged. Among valid
 MIGRAD minima the smallest objective value is selected for MINOS. The mixed
 model remains fitted over the full statistical region.
 
-The mixed model fits `R_core > 0`, `R_tail > 0` and `f_core` in `[0,1]`. No
+The mixed model uses `R_core > 0`, `R_tail > 0` and `f_core` in `[0,1]` as the
+three MIGRAD coordinates. `A > 0` is a fourth physical fit parameter but is
+profiled analytically at every MIGRAD tuple. No
 ordering between `R_core` and `R_tail` is imposed or used as a validity
-criterion. Each estimator runs 36 deterministic starts, the Cartesian product
+criterion. The Neyman mixed fit runs 36 deterministic starts, the Cartesian product
 of `R_core = {R_G, 0.5 R_HM, R_HM, 2 R_HM}`,
 `R_tail = {0.5, 1, 2} R_tail,mom` and
-`f_core = {0.25, 0.50, 0.75}`. The `R_G` seed always comes from the pure
-Gaussian fit using the same estimator. Poisson, Neyman and Pearson therefore
-remain completely independent.
+`f_core = {0.25, 0.50, 0.75}`. The `R_G` seed comes from the Neyman pure
+Gaussian fit. The 36-start mixed search therefore remains three-dimensional
+despite the free amplitude.
 
 Numerically valid mixed MIGRAD minima are first grouped into numerical basins
 using the final `(log(R_core), log(R_tail), f_core)` coordinates. Each basin is
@@ -973,13 +986,15 @@ part of the deterministic `R_core` seed set but no longer ranks final basins. No
 between `R_core` and `R_tail` is imposed. For diagnostic studies, the terminal
 physical `R_core`, `R_tail`, and `f_core` coordinates of every one of the 36
 starts are also serialized, independently of whether that start is ultimately
-accepted. Poisson remains the default estimator used by backward-compatible
-plotting columns.
+accepted. After the selected 3D minimum is polished, a dedicated explicit-A
+MINOS profile obtains the asymmetric `A` uncertainty while allowing
+`R_core`, `R_tail`, and `f_core` to vary. No unused fixed-shape A error is
+calculated.
 
 The one-dimensional radial-mT count-threshold machinery is retained, but its
 current value is `N_selected >= 0`, so no non-empty slice is vetoed by this
 criterion. `N_selected` itself and its histogram-selection definition are
-unchanged. Invalid MIGRAD/MINOS or covariance states, degenerate core fractions,
+unchanged. Invalid MIGRAD/MINOS or covariance states, degenerate mixing coefficients,
 missing Gaussian anchors, invalid half-maximum seeds, invalid objectives and
 insufficient regions are preserved explicitly. An invalid fit does not fabricate
 parameter estimates or fit curves.
@@ -1298,14 +1313,14 @@ written when a statistical region exists. Distribution columns contain the
 normalized `pdf` and `d_pdf`, plus Gaussian and/or mixed fitted PDF columns only
 when the corresponding fit is fully valid. Gaussian fitted values are written over the full contiguous Gaussian fit
 region. The backward-compatible
-`gaussian_fit_pdf` and `mixed_fit_pdf` columns are the Poisson curves; valid
-alternatives are written as `gaussian_fit_pdf_neyman`,
-`gaussian_fit_pdf_pearson`, `mixed_fit_pdf_neyman` and
-`mixed_fit_pdf_pearson`. All mixed curves span the full statistical region. The
+`gaussian_fit_pdf` remains the backward-compatible Poisson Gaussian curve;
+valid Gaussian alternatives are written as `gaussian_fit_pdf_neyman` and
+`gaussian_fit_pdf_pearson`. The redesigned mixed curve is written as
+`mixed_fit_pdf_neyman`. All mixed curves span the full statistical region. The
 parameter table contains an explicit `estimator` column. It records the exact
 region used by each fit, independent Poisson/Neyman/Pearson Gaussian `R_G_core`
-and `A_G`, and independent mixed `R_core`, `R_tail`, and `f_core` values, asymmetric MINOS
-errors, objective minima, covariance state, all 36 mixed-start diagnostics,
+and `A_G`, and the Neyman mixed `R_core`, `R_tail`, `f_core`, and `A` values,
+asymmetric MINOS/profile errors, objective minima, covariance state, all 36 mixed-start diagnostics,
 the terminal `R_core`, `R_tail`, and `f_core` coordinates for every mixed start,
 and the selected-minimum basin multiplicity diagnostic.
 Delta-t directories contain
@@ -1437,11 +1452,11 @@ The standard CTest suite contains 51 tests covering:
 - statistical-region selection for shape and signed delta-t histograms;
 - presentation normalization and counting-error densities;
 - exact-edge Gaussian/exponential OSL and radial model integrals;
-- unit-normalized model probabilities plus binned Poisson deviance, Neyman
-  chi-square and Pearson chi-square, including their documented zero-count
-  semantics and explicit probability-normalization validation;
+- normalized-model Poisson/Pearson helpers plus the dedicated mixed Neyman path
+  based on unnormalized exact-bin `p_i`, analytic amplitude profiling, and the
+  documented `p_i == 0` limit;
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
-  and half-maximum starts, plus independent 36-start mixed Minuit2 fits that
+  and half-maximum starts, plus the 36-start Neyman mixed Minuit2 fit that
   reject basins using the origin-specific physical `f_core` interval: strict
   `(0.1,0.9)` for PRD and `(0.1,0.99)` for P/PR; select the most populated
   admissible basin (smallest q then lowest start index for equal multiplicity),

@@ -92,10 +92,10 @@ bool verify_distinct_exponential_forms() {
 }
 
 /**
- * @brief Verify each component is normalized on the selected exact-bin range.
- * @return true when probabilities sum to one and use selected edges.
+ * @brief Verify normalized Gaussian and unnormalized mixed exact-bin models.
+ * @return true when each API retains its documented normalization semantics.
  */
-bool verify_exact_bin_normalization() {
+bool verify_exact_bin_model_semantics() {
     const hbt::HistogramBinningConfig binning{6U, 0.0, 3.0, 2.0};
     const hbt::StatisticalRegion region{1U, 4U, 100U};
     const std::vector<double> gaussian = hbt::gaussian_bin_probabilities(
@@ -104,25 +104,36 @@ bool verify_exact_bin_normalization() {
         region,
         0.8
     );
-    const std::vector<double> mixed = hbt::mixed_bin_probabilities(
+    const double core_radius = 0.7;
+    const double tail_radius = 1.4;
+    const double f = 0.35;
+    const std::vector<double> mixed = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::Radial,
         binning,
         region,
-        0.7,
-        1.4,
-        0.35
+        core_radius,
+        tail_radius,
+        f
     );
     double gaussian_sum = 0.0;
-    double mixed_sum = 0.0;
     for (const double value : gaussian) {
         gaussian_sum += value;
     }
-    for (const double value : mixed) {
-        mixed_sum += value;
-    }
     if (gaussian.size() != 4U || mixed.size() != 4U ||
-        !close(gaussian_sum, 1.0) || !close(mixed_sum, 1.0)) {
-        return fail("component probabilities are not normalized on region");
+        !close(gaussian_sum, 1.0)) {
+        return fail("exact-bin model cardinality or Gaussian normalization failed");
+    }
+    const double lower = 0.5;
+    const double upper = 1.0;
+    const double expected =
+        f * hbt::gaussian_component_integral(
+            hbt::FitObservableFamily::Radial, lower, upper, core_radius
+        ) +
+        (1.0 - f) * hbt::exponential_component_integral(
+            hbt::FitObservableFamily::Radial, lower, upper, tail_radius
+        );
+    if (!close(mixed.front(), expected)) {
+        return fail("mixed model normalized components instead of mixing integrals");
     }
     return true;
 }
@@ -136,13 +147,17 @@ bool verify_mixed_endpoint_degeneracies() {
     const hbt::StatisticalRegion region{0U, 4U, 100U};
     const double core_radius = 0.9;
     const double tail_radius = 1.7;
-    const std::vector<double> pure_core = hbt::gaussian_bin_probabilities(
-        hbt::FitObservableFamily::OSL,
-        binning,
-        region,
-        core_radius
-    );
-    const std::vector<double> endpoint_core = hbt::mixed_bin_probabilities(
+    std::vector<double> pure_core;
+    pure_core.reserve(5U);
+    for (std::size_t bin = 0U; bin < 5U; ++bin) {
+        pure_core.push_back(hbt::gaussian_component_integral(
+            hbt::FitObservableFamily::OSL,
+            static_cast<double>(bin),
+            static_cast<double>(bin + 1U),
+            core_radius
+        ));
+    }
+    const std::vector<double> endpoint_core = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::OSL,
         binning,
         region,
@@ -150,7 +165,7 @@ bool verify_mixed_endpoint_degeneracies() {
         tail_radius,
         1.0
     );
-    const std::vector<double> endpoint_tail = hbt::mixed_bin_probabilities(
+    const std::vector<double> endpoint_tail = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::OSL,
         binning,
         region,
@@ -161,7 +176,6 @@ bool verify_mixed_endpoint_degeneracies() {
 
     std::vector<double> pure_tail;
     pure_tail.reserve(5U);
-    double tail_norm = 0.0;
     for (std::size_t bin = 0U; bin < 5U; ++bin) {
         const double integral = hbt::exponential_component_integral(
             hbt::FitObservableFamily::OSL,
@@ -170,10 +184,6 @@ bool verify_mixed_endpoint_degeneracies() {
             tail_radius
         );
         pure_tail.push_back(integral);
-        tail_norm += integral;
-    }
-    for (double& value : pure_tail) {
-        value /= tail_norm;
     }
 
     for (std::size_t bin = 0U; bin < 5U; ++bin) {
@@ -214,7 +224,7 @@ bool verify_large_radius_radial_stability() {
         region,
         radius
     );
-    const std::vector<double> mixed = hbt::mixed_bin_probabilities(
+    const std::vector<double> mixed = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::Radial,
         binning,
         region,
@@ -224,7 +234,6 @@ bool verify_large_radius_radial_stability() {
     );
 
     double gaussian_sum = 0.0;
-    double mixed_sum = 0.0;
     for (const double value : gaussian) {
         if (!std::isfinite(value) || value <= 0.0) {
             return fail("large-R radial Gaussian produced an invalid bin");
@@ -235,10 +244,9 @@ bool verify_large_radius_radial_stability() {
         if (!std::isfinite(value) || value <= 0.0) {
             return fail("large-R radial mixture produced an invalid bin");
         }
-        mixed_sum += value;
     }
-    if (!close(gaussian_sum, 1.0) || !close(mixed_sum, 1.0)) {
-        return fail("large-R radial probabilities are not normalized");
+    if (!close(gaussian_sum, 1.0)) {
+        return fail("large-R radial Gaussian probabilities are not normalized");
     }
 
     const double lower = 9.5;
@@ -309,6 +317,47 @@ bool verify_neyman_chi_square_terms() {
     const double expected = (10.0 - 7.5) * (10.0 - 7.5) / 10.0;
     if (!close(actual, expected)) {
         return fail("Neyman chi-square did not omit zero-count bins exactly");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify analytic mixed A and the exact Neyman p_i == 0 limit.
+ * @return true when the fixed-shape amplitude is exact and a populated zero
+ *         model bin contributes n_i instead of invalidating the objective.
+ */
+bool verify_profiled_mixed_neyman_amplitude() {
+    const std::vector<std::uint64_t> bins{10U, 5U, 2U};
+    const hbt::StatisticalRegion region{0U, 2U, 17U};
+    const std::vector<double> p{0.2, 0.1, 0.0};
+    const double amplitude = hbt::neyman_optimal_mixed_amplitude(
+        bins, 0U, region, p
+    );
+    const double expected_amplitude = 50.0 / 17.0;
+    if (!close(amplitude, expected_amplitude)) {
+        return fail("analytic mixed Neyman amplitude is incorrect");
+    }
+    const double chi_square = hbt::binned_neyman_chi_square_from_integrals(
+        bins, 0U, region, p, amplitude
+    );
+    if (!close(chi_square, 2.0)) {
+        return fail("populated p_i == 0 bin did not contribute exactly n_i");
+    }
+    return true;
+}
+
+/**
+ * @brief Verify mixed presentation density includes fitted A and permits zero.
+ */
+bool verify_mixed_fitted_density() {
+    const hbt::HistogramBinningConfig binning{3U, 0.0, 1.5, 2.0};
+    const std::vector<double> p{0.2, 0.1, 0.0};
+    const std::vector<double> density = hbt::mixed_integrals_to_pdf(
+        p, 2.0, binning
+    );
+    if (density.size() != 3U || !close(density[0U], 0.8) ||
+        !close(density[1U], 0.4) || !close(density[2U], 0.0)) {
+        return fail("mixed fitted density lost A scaling or zero bins");
     }
     return true;
 }
@@ -541,11 +590,13 @@ bool verify_integrated_curve_density() {
 int main() {
     if (!verify_distinct_physical_forms() ||
         !verify_distinct_exponential_forms() ||
-        !verify_exact_bin_normalization() ||
+        !verify_exact_bin_model_semantics() ||
         !verify_mixed_endpoint_degeneracies() ||
         !verify_large_radius_radial_stability() ||
         !verify_zero_count_likelihood_term() ||
         !verify_neyman_chi_square_terms() ||
+        !verify_profiled_mixed_neyman_amplitude() ||
+        !verify_mixed_fitted_density() ||
         !verify_pearson_chi_square_terms() ||
         !verify_raw_count_anchor() ||
         !verify_likelihood_probability_normalization() ||
