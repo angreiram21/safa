@@ -61,7 +61,6 @@ namespace hbt {
  * @param gaussian_result Valid full-range free-amplitude Gaussian result from the same estimator;
  *        its fitted radius provides the R_G member of the core-seed set.
  * @param half_maximum_seed Gaussian R seed converted from histogram FWHM.
- * @param core_fraction_policy Origin-dependent physical mixing-coefficient basin policy.
  * @return Complete 36-start fit result, analytic amplitude, terminal start
  *         endpoints, and explicit diagnostics.
  * @throws std::out_of_range If the selected raw slot is unavailable.
@@ -81,20 +80,22 @@ namespace hbt {
  * The deterministic Cartesian product is
  * R_core={R_G,0.5R_HM,R_HM,2R_HM},
  * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
- * grouped into numerical basins. Basin fractions are filtered by the supplied
- * origin policy: PRD requires 0.1 < mean(f_core) < 0.9, while P and PR require
- * 0.1 < mean(f_core) < 0.99 to reject the near-pure-Gaussian degeneracy. Among
- * the remaining basins, every origin selects the basin reached by the largest
- * number of converged deterministic starts. Equal-size basins are ranked by
- * their smallest q and then by lowest start index. Once the basin is fixed,
+ * grouped into numerical basins without any artificial f_core acceptance
+ * window. Every origin selects the basin reached by the largest number of
+ * converged deterministic starts. Equal-size basins are ranked by their
+ * smallest q and then by lowest start index. Once the basin is fixed,
  * its endpoints are ordered by increasing terminal q. Each endpoint supplies
  * coordinates for a fresh post-selection MIGRAD pass followed by MINOS. The
  * first fully publishable result is accepted; a MIGRAD or MINOS failure retries
  * the next endpoint only within that same basin. If all endpoints fail, the
  * lowest-q endpoint remains the primary failure diagnostic. These fallback
  * passes do not participate in basin selection. R_HM remains in the
- * deterministic core-seed set but does not rank final basins. If every basin is degenerate, the mixed
- * fit is invalidated with DegenerateCoreFraction.
+ * deterministic core-seed set but does not rank final basins. Exact f_core=0
+ * and f_core=1 endpoints are diagnosed only after polishing as, respectively,
+ * a non-identifiable Gaussian core or exponential tail. For 0<f_core<1,
+ * component identifiability is determined from finite two-sided Delta-chi2=1
+ * MINOS intervals of R_core and R_tail; f_core touching its physical [0,1]
+ * profile boundary is not by itself a fit failure.
  * The terminal physical R_core, R_tail and f_core coordinates of every start
  * are retained for post-run basin inspection, including finite endpoints from
  * starts that fail the acceptance contract. These endpoint diagnostics do not
@@ -110,8 +111,7 @@ namespace hbt {
     const StatisticalRegion& region,
     FitEstimator estimator,
     const GaussianFitResult& gaussian_result,
-    double half_maximum_seed,
-    MixedCoreFractionPolicy core_fraction_policy
+    double half_maximum_seed
 );
 
 }  // namespace hbt

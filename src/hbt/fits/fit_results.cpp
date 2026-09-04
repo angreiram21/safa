@@ -93,8 +93,7 @@ std::vector<std::size_t> largest_mixed_basin_group(
 std::vector<std::size_t> rank_mixed_starts_in_selected_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
-    const std::vector<std::size_t>& valid_indices,
-    MixedCoreFractionPolicy core_fraction_policy
+    const std::vector<std::size_t>& valid_indices
 ) {
     if (endpoints.size() != q_values.size()) {
         throw std::invalid_argument(
@@ -131,32 +130,12 @@ std::vector<std::size_t> rank_mixed_starts_in_selected_basin(
          component_index < components.size();
          ++component_index) {
         const auto& component = components[component_index];
-        double core_fraction_sum = 0.0;
         double component_q = std::numeric_limits<double>::infinity();
         std::size_t component_lowest_index =
             std::numeric_limits<std::size_t>::max();
         for (const std::size_t index : component) {
-            core_fraction_sum += endpoints[index].core_fraction;
             component_q = std::min(component_q, q_values[index]);
             component_lowest_index = std::min(component_lowest_index, index);
-        }
-        const double component_size = static_cast<double>(component.size());
-        const double mean_core_fraction = core_fraction_sum / component_size;
-        const bool lower_bound_valid =
-            mean_core_fraction > kMixedPhysicalCoreFractionMin;
-        bool upper_bound_valid = false;
-        switch (core_fraction_policy) {
-            case MixedCoreFractionPolicy::RequireCoreAndTail:
-                upper_bound_valid =
-                    mean_core_fraction < kMixedPhysicalCoreFractionMax;
-                break;
-            case MixedCoreFractionPolicy::RejectPureGaussian:
-                upper_bound_valid =
-                    mean_core_fraction < kMixedPPrCoreFractionMax;
-                break;
-        }
-        if (!lower_bound_valid || !upper_bound_valid) {
-            continue;
         }
 
         // Basin multiplicity measures how robustly the deterministic start grid
@@ -199,15 +178,13 @@ std::vector<std::size_t> rank_mixed_starts_in_selected_basin(
 std::optional<std::size_t> select_mixed_start_by_largest_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
-    const std::vector<std::size_t>& valid_indices,
-    MixedCoreFractionPolicy core_fraction_policy
+    const std::vector<std::size_t>& valid_indices
 ) {
     const std::vector<std::size_t> ranked =
         rank_mixed_starts_in_selected_basin(
             endpoints,
             q_values,
-            valid_indices,
-            core_fraction_policy
+            valid_indices
         );
     if (ranked.empty()) {
         return std::nullopt;
@@ -270,13 +247,16 @@ FitFailureReason fit_failure_from_minos(
     return FitFailureReason::None;
 }
 
-FitFailureReason mixed_core_fraction_failure(double core_fraction) {
+FitFailureReason mixed_identifiability_failure(double core_fraction) {
     if (!std::isfinite(core_fraction) || core_fraction < 0.0 ||
         core_fraction > 1.0) {
         return FitFailureReason::NonFiniteMinimum;
     }
-    if (core_fraction == 0.0 || core_fraction == 1.0) {
-        return FitFailureReason::DegenerateCoreFraction;
+    if (core_fraction == 0.0) {
+        return FitFailureReason::NonIdentifiableCore;
+    }
+    if (core_fraction == 1.0) {
+        return FitFailureReason::NonIdentifiableTail;
     }
     return FitFailureReason::None;
 }
@@ -311,8 +291,10 @@ const char* fit_failure_reason_token(FitFailureReason reason) {
             return "migrad_above_max_edm";
         case FitFailureReason::NonFiniteMinimum:
             return "non_finite_minimum";
-        case FitFailureReason::DegenerateCoreFraction:
-            return "degenerate_core_fraction";
+        case FitFailureReason::NonIdentifiableCore:
+            return "non_identifiable_core";
+        case FitFailureReason::NonIdentifiableTail:
+            return "non_identifiable_tail";
         case FitFailureReason::MinosLowerInvalid:
             return "minos_lower_invalid";
         case FitFailureReason::MinosUpperInvalid:

@@ -488,6 +488,74 @@ MinosDiagnostic minos_diagnostic(const MinosError& error) {
 }
 
 /**
+ * @brief Classify a mixed radius MINOS result by identifiability.
+ * @param diagnostic Stable MINOS result for log(R_core) or log(R_tail).
+ * @param non_identifiable_reason Component-specific failure token.
+ * @return None for a finite two-sided Delta-chi2=1 interval. Numerical call
+ *         limits/new minima retain their explicit MINOS failure reason; a
+ *         missing profile crossing is classified as non-identifiability.
+ */
+FitFailureReason mixed_radius_identifiability_failure(
+    const MinosDiagnostic& diagnostic,
+    FitFailureReason non_identifiable_reason
+) {
+    if (non_identifiable_reason != FitFailureReason::NonIdentifiableCore &&
+        non_identifiable_reason != FitFailureReason::NonIdentifiableTail) {
+        throw std::invalid_argument(
+            "HBT mixed fit: invalid component identifiability reason"
+        );
+    }
+    if (diagnostic.lower_new_minimum) {
+        return FitFailureReason::MinosLowerNewMinimum;
+    }
+    if (diagnostic.upper_new_minimum) {
+        return FitFailureReason::MinosUpperNewMinimum;
+    }
+    if (diagnostic.lower_call_limit) {
+        return FitFailureReason::MinosLowerCallLimit;
+    }
+    if (diagnostic.upper_call_limit) {
+        return FitFailureReason::MinosUpperCallLimit;
+    }
+    if (!diagnostic.lower_valid || !diagnostic.upper_valid ||
+        diagnostic.at_lower_limit || diagnostic.at_upper_limit) {
+        return non_identifiable_reason;
+    }
+    return FitFailureReason::None;
+}
+
+/**
+ * @brief Classify MINOS for the bounded mixing coefficient f.
+ *
+ * Reaching f=0 or f=1 on one profile side is allowed: the boundary is physical
+ * and does not by itself make the fitted components non-identifiable. Other
+ * invalid sides remain failures.
+ */
+FitFailureReason fit_failure_from_bounded_fraction_minos(
+    const MinosDiagnostic& diagnostic
+) {
+    if (diagnostic.lower_new_minimum) {
+        return FitFailureReason::MinosLowerNewMinimum;
+    }
+    if (diagnostic.upper_new_minimum) {
+        return FitFailureReason::MinosUpperNewMinimum;
+    }
+    if (diagnostic.lower_call_limit) {
+        return FitFailureReason::MinosLowerCallLimit;
+    }
+    if (diagnostic.upper_call_limit) {
+        return FitFailureReason::MinosUpperCallLimit;
+    }
+    if (!diagnostic.lower_valid && !diagnostic.at_lower_limit) {
+        return FitFailureReason::MinosLowerInvalid;
+    }
+    if (!diagnostic.upper_valid && !diagnostic.at_upper_limit) {
+        return FitFailureReason::MinosUpperInvalid;
+    }
+    return FitFailureReason::None;
+}
+
+/**
  * @brief Test whether one returned Gaussian minimum has a valid objective.
  * @param objective Borrowed synchronous objective.
  * @param minimum Completed MIGRAD result.
@@ -581,22 +649,30 @@ FitParameterEstimate physical_radius_estimate(
 }
 
 /**
- * @brief Convert a direct physical-parameter MINOS interval to distances.
- * @param value Central fitted physical value.
- * @param error Fully valid MINOS result for the same parameter.
- * @return Physical value and non-negative asymmetric distances.
- * @throws std::invalid_argument If the transformed interval is invalid.
+ * @brief Convert the bounded f MINOS interval to asymmetric distances.
+ * @param value Central fitted mixing coefficient.
+ * @param error MINOS result for f.
+ * @param diagnostic Stable MINOS side diagnostics.
+ * @return Physical f and non-negative asymmetric distances. A side that reaches
+ *         a physical bound is represented exactly by 0 or 1.
+ * @throws std::invalid_argument If the resulting interval is inconsistent.
  */
-FitParameterEstimate direct_parameter_estimate(
+FitParameterEstimate bounded_fraction_estimate(
     double value,
-    const MinosError& error
+    const MinosError& error,
+    const MinosDiagnostic& diagnostic
 ) {
-    const double lower = value + error.Lower();
-    const double upper = value + error.Upper();
+    const double lower = diagnostic.at_lower_limit
+        ? 0.0
+        : value + error.Lower();
+    const double upper = diagnostic.at_upper_limit
+        ? 1.0
+        : value + error.Upper();
     if (!std::isfinite(value) || !std::isfinite(lower) ||
-        !std::isfinite(upper) || lower > value || upper < value) {
+        !std::isfinite(upper) || value < 0.0 || value > 1.0 ||
+        lower < 0.0 || upper > 1.0 || lower > value || upper < value) {
         throw std::invalid_argument(
-            "HBT analysis MINOS: invalid direct parameter interval"
+            "HBT mixed fit: invalid bounded f profile interval"
         );
     }
     return {value, value - lower, upper - value};
@@ -928,8 +1004,7 @@ MixedFitResult fit_mixed_model(
     const StatisticalRegion& region,
     FitEstimator estimator,
     const GaussianFitResult& gaussian_result,
-    double half_maximum_seed,
-    MixedCoreFractionPolicy core_fraction_policy
+    double half_maximum_seed
 ) {
     if (estimator != FitEstimator::Neyman) {
         return invalid_mixed(FitFailureReason::NotApplicable, estimator);
@@ -1049,13 +1124,8 @@ MixedFitResult fit_mixed_model(
         rank_mixed_starts_in_selected_basin(
             endpoints,
             q_values,
-            valid_indices,
-            core_fraction_policy
+            valid_indices
         );
-    if (candidate_order.empty()) {
-        result.failure_reason = FitFailureReason::DegenerateCoreFraction;
-        return result;
-    }
 
     result.consensus_size = candidate_order.size();
     result.selected_core_start = candidate_order.front();
@@ -1097,17 +1167,11 @@ MixedFitResult fit_mixed_model(
             !std::isfinite(basin_core_fraction) ||
             !std::isfinite(basin_core_radius) ||
             !std::isfinite(basin_tail_radius) ||
+            basin_core_fraction < 0.0 || basin_core_fraction > 1.0 ||
             basin_core_radius <= 0.0 || basin_tail_radius <= 0.0) {
             candidate.failure_reason = FitFailureReason::NonFiniteMinimum;
             return candidate;
         }
-        const FitFailureReason basin_fraction_reason =
-            mixed_core_fraction_failure(basin_core_fraction);
-        if (basin_fraction_reason != FitFailureReason::None) {
-            candidate.failure_reason = basin_fraction_reason;
-            return candidate;
-        }
-
         MixedObjective selected_objective(
             family, bins, offset, binning, region
         );
@@ -1140,7 +1204,7 @@ MixedFitResult fit_mixed_model(
             return candidate;
         }
         const FitFailureReason fraction_reason =
-            mixed_core_fraction_failure(core_fraction);
+            mixed_identifiability_failure(core_fraction);
         if (fraction_reason != FitFailureReason::None) {
             candidate.failure_reason = fraction_reason;
             return candidate;
@@ -1168,42 +1232,45 @@ MixedFitResult fit_mixed_model(
         MnMinos minos(selected_objective, selected);
         const MinosError core_error = minos.Minos(0U);
         candidate.minos_core_radius = minos_diagnostic(core_error);
-        FitFailureReason minos_reason = fit_failure_from_minos(
+        FitFailureReason minos_reason = mixed_radius_identifiability_failure(
             candidate.minos_core_radius,
-            false
+            FitFailureReason::NonIdentifiableCore
         );
         if (minos_reason != FitFailureReason::None) {
             candidate.failure_reason = minos_reason;
+            return candidate;
+        }
+        try {
+            (void)physical_radius_estimate(log_core, core_error);
+        } catch (const std::exception&) {
+            candidate.failure_reason = FitFailureReason::NonIdentifiableCore;
             return candidate;
         }
 
         const MinosError tail_error = minos.Minos(1U);
         candidate.minos_tail_radius = minos_diagnostic(tail_error);
-        minos_reason = fit_failure_from_minos(
+        minos_reason = mixed_radius_identifiability_failure(
             candidate.minos_tail_radius,
-            false
+            FitFailureReason::NonIdentifiableTail
         );
         if (minos_reason != FitFailureReason::None) {
             candidate.failure_reason = minos_reason;
+            return candidate;
+        }
+        try {
+            (void)physical_radius_estimate(log_tail, tail_error);
+        } catch (const std::exception&) {
+            candidate.failure_reason = FitFailureReason::NonIdentifiableTail;
             return candidate;
         }
 
         const MinosError fraction_error = minos.Minos(2U);
         candidate.minos_core_fraction = minos_diagnostic(fraction_error);
-        minos_reason = fit_failure_from_minos(
-            candidate.minos_core_fraction,
-            true
+        minos_reason = fit_failure_from_bounded_fraction_minos(
+            candidate.minos_core_fraction
         );
         if (minos_reason != FitFailureReason::None) {
             candidate.failure_reason = minos_reason;
-            return candidate;
-        }
-        if (core_fraction + fraction_error.Lower() <= 0.0) {
-            candidate.failure_reason = FitFailureReason::MinosLowerLimit;
-            return candidate;
-        }
-        if (core_fraction + fraction_error.Upper() >= 1.0) {
-            candidate.failure_reason = FitFailureReason::MinosUpperLimit;
             return candidate;
         }
 
@@ -1264,9 +1331,10 @@ MixedFitResult fit_mixed_model(
                 log_tail,
                 tail_error
             );
-            candidate.core_fraction = direct_parameter_estimate(
+            candidate.core_fraction = bounded_fraction_estimate(
                 core_fraction,
-                fraction_error
+                fraction_error,
+                candidate.minos_core_fraction
             );
             const double profile_log_amplitude =
                 amplitude_profile_minimum.UserState().Value(3U);

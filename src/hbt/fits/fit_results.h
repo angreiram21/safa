@@ -36,18 +36,6 @@ enum class FitEstimator {
 };
 
 /**
- * @brief Origin-dependent physical admissibility policy for mixed-fit basins.
- *
- * PRD requires both Gaussian core and exponential tail to remain appreciable.
- * P and PR also require a genuinely mixed solution and reject the degenerate
- * near-pure-Gaussian limit.
- */
-enum class MixedCoreFractionPolicy {
-    RequireCoreAndTail,  ///< PRD: require 0.1 < mean(f_core) < 0.9.
-    RejectPureGaussian   ///< P/PR: require 0.1 < mean(f_core) < 0.99.
-};
-
-/**
  * @brief Stable reason describing why a fit is not fully valid.
  */
 enum class FitFailureReason {
@@ -65,7 +53,8 @@ enum class FitFailureReason {
     MigradCallLimit,         ///< MIGRAD exhausted its call budget.
     MigradAboveMaxEdm,       ///< MIGRAD stopped above maximum EDM.
     NonFiniteMinimum,        ///< Minimum or physical parameter is non-finite.
-    DegenerateCoreFraction,  ///< No basin passes the origin-specific physical f_core policy.
+    NonIdentifiableCore,    ///< Gaussian-core radius is not identified by a finite two-sided profile.
+    NonIdentifiableTail,    ///< Exponential-tail radius is not identified by a finite two-sided profile.
     MinosLowerInvalid,       ///< A required lower MINOS side is invalid.
     MinosUpperInvalid,       ///< A required upper MINOS side is invalid.
     MinosLowerCallLimit,     ///< Lower MINOS side exhausted its call budget.
@@ -178,15 +167,6 @@ constexpr double kMixedBasinLogRadiusTolerance = 0.01;
 /** Numerical same-basin absolute tolerance for f_core. */
 constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 
-/** Lower exclusive f_core bound for a physically non-degenerate mixed basin. */
-constexpr double kMixedPhysicalCoreFractionMin = 0.1;
-
-/** PRD-only upper exclusive f_core bound for a non-degenerate mixed basin. */
-constexpr double kMixedPhysicalCoreFractionMax = 0.9;
-
-/** P/PR upper exclusive f_core bound rejecting the Gaussian-limit degeneracy. */
-constexpr double kMixedPPrCoreFractionMax = 0.99;
-
 /**
  * @brief Test whether two mixed endpoints represent the same numerical basin.
  * @param lhs First converged mixed endpoint.
@@ -222,41 +202,34 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
 );
 
 /**
- * @brief Rank starts inside the selected origin-admissible mixed basin.
+ * @brief Rank starts inside the selected numerical mixed basin.
  * @param endpoints Final endpoint for every attempted deterministic start.
  * @param q_values Objective value associated with every attempted start.
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
- * @param core_fraction_policy Origin-dependent f_core mixing-coefficient admissibility policy.
  * @return Start indices from the selected basin ordered by increasing q and
- *         then by increasing start index. An empty vector means every basin is
- *         physically degenerate.
+ *         then by increasing start index.
  * @throws std::invalid_argument If array sizes differ, no valid start is
  *         supplied, or a valid q is non-finite.
  * @throws std::out_of_range If a valid start index is outside the input arrays.
  *
  * Valid endpoints are partitioned into connected numerical basins using
- * same_mixed_basin(). Basin admissibility is determined from the arithmetic
- * mean f_core: PRD requires 0.1 < mean(f_core) < 0.9, while P and PR require
- * 0.1 < mean(f_core) < 0.99. Among admissible basins, the largest connected
- * component wins; equal-size basins are ranked by their smallest q and then by
- * their lowest start index. Only after that basin is fixed are its member
- * starts ordered by q for same-basin post-selection fallback.
+ * same_mixed_basin(). No basin is rejected because f is close to 0 or 1. The
+ * largest connected component wins; equal-size basins are ranked by their
+ * smallest q and then by their lowest start index. Only after polishing and
+ * MINOS are exact endpoint degeneracies and radius identifiability diagnosed.
  */
 [[nodiscard]] std::vector<std::size_t> rank_mixed_starts_in_selected_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
-    const std::vector<std::size_t>& valid_indices,
-    MixedCoreFractionPolicy core_fraction_policy
+    const std::vector<std::size_t>& valid_indices
 );
 
 /**
- * @brief Select the lowest-q start from the largest admissible mixed basin.
+ * @brief Select the lowest-q start from the largest numerical mixed basin.
  * @param endpoints Final endpoint for every attempted deterministic start.
  * @param q_values Objective value associated with every attempted start.
  * @param valid_indices Start indices whose MIGRAD states are numerically valid.
- * @param core_fraction_policy Origin-dependent f_core mixing-coefficient admissibility policy.
- * @return Lowest-q start index in the selected basin, or std::nullopt when
- *         every numerical basin is physically degenerate.
+ * @return Lowest-q start index in the selected basin.
  * @throws std::invalid_argument If array sizes differ, no valid start is
  *         supplied, or a valid q is non-finite.
  * @throws std::out_of_range If a valid start index is outside the input arrays.
@@ -269,8 +242,7 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
 [[nodiscard]] std::optional<std::size_t> select_mixed_start_by_largest_basin(
     const std::vector<MixedBasinPoint>& endpoints,
     const std::vector<double>& q_values,
-    const std::vector<std::size_t>& valid_indices,
-    MixedCoreFractionPolicy core_fraction_policy
+    const std::vector<std::size_t>& valid_indices
 );
 
 /**
@@ -300,12 +272,12 @@ constexpr double kMixedPPrCoreFractionMax = 0.99;
 );
 
 /**
- * @brief Classify the physical validity of a fitted mixed Gaussian mixing coefficient.
- * @param core_fraction Fitted physical mixing coefficient.
- * @return None for 0 < f_core < 1, DegenerateCoreFraction at either exact
- *         endpoint, or NonFiniteMinimum for a non-finite/out-of-domain value.
+ * @brief Classify exact mixed-component identifiability at f endpoints.
+ * @param core_fraction Fitted physical mixing coefficient f in [0,1].
+ * @return NonIdentifiableCore at f=0, NonIdentifiableTail at f=1, None for
+ *         0<f<1, or NonFiniteMinimum for a non-finite/out-of-domain value.
  */
-[[nodiscard]] FitFailureReason mixed_core_fraction_failure(
+[[nodiscard]] FitFailureReason mixed_identifiability_failure(
     double core_fraction
 );
 

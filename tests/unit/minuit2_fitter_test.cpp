@@ -176,8 +176,7 @@ bool verify_mixed_multistart_and_minos() {
         region,
         estimator,
         gaussian,
-        half_maximum_seed,
-        hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+        half_maximum_seed
     );
     if (mixed.estimator != estimator) {
         return fail("mixed result lost its Neyman estimator identity");
@@ -255,13 +254,9 @@ bool verify_mixed_multistart_and_minos() {
             "post-selection MIGRAD polishing left the selected mixed basin"
         );
     }
-    if (!(mixed.core_fraction->value >
-              hbt::kMixedPhysicalCoreFractionMin &&
-          mixed.core_fraction->value <
-              hbt::kMixedPhysicalCoreFractionMax)) {
-        return fail(
-            "mixed Neyman estimator published f_core outside policy"
-        );
+    if (mixed.core_fraction->value < 0.0 ||
+        mixed.core_fraction->value > 1.0) {
+        return fail("mixed Neyman estimator published f_core outside [0,1]");
     }
     return true;
 }
@@ -392,22 +387,22 @@ bool verify_minos_failure_classification() {
 }
 
 /**
- * @brief Verify exact mixed-fraction endpoints are explicit degeneracies.
+ * @brief Verify exact mixed-fraction endpoints identify the missing component.
  * @return true when endpoint and out-of-domain states remain distinguishable.
  */
-bool verify_core_fraction_classification() {
-    if (hbt::mixed_core_fraction_failure(0.0) !=
-            hbt::FitFailureReason::DegenerateCoreFraction ||
-        hbt::mixed_core_fraction_failure(1.0) !=
-            hbt::FitFailureReason::DegenerateCoreFraction ||
-        hbt::mixed_core_fraction_failure(0.5) !=
+bool verify_mixed_identifiability_classification() {
+    if (hbt::mixed_identifiability_failure(0.0) !=
+            hbt::FitFailureReason::NonIdentifiableCore ||
+        hbt::mixed_identifiability_failure(1.0) !=
+            hbt::FitFailureReason::NonIdentifiableTail ||
+        hbt::mixed_identifiability_failure(0.5) !=
             hbt::FitFailureReason::None ||
-        hbt::mixed_core_fraction_failure(-0.1) !=
+        hbt::mixed_identifiability_failure(-0.1) !=
             hbt::FitFailureReason::NonFiniteMinimum ||
-        hbt::mixed_core_fraction_failure(
+        hbt::mixed_identifiability_failure(
             std::numeric_limits<double>::quiet_NaN()
         ) != hbt::FitFailureReason::NonFiniteMinimum) {
-        return fail("mixed core-fraction states are not classified correctly");
+        return fail("mixed component identifiability states are not classified correctly");
     }
     return true;
 }
@@ -445,8 +440,7 @@ bool verify_insufficient_bins_are_reported() {
         three_bins,
         hbt::FitEstimator::Neyman,
         gaussian,
-        1.0,
-        hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+        1.0
     );
     if (mixed.fully_valid ||
         mixed.failure_reason != hbt::FitFailureReason::InsufficientBins ||
@@ -467,7 +461,7 @@ int main() {
         !verify_mixed_multistart_and_minos() ||
         !verify_migrad_failure_classification() ||
         !verify_minos_failure_classification() ||
-        !verify_core_fraction_classification() ||
+        !verify_mixed_identifiability_classification() ||
         !verify_insufficient_bins_are_reported()) {
         return EXIT_FAILURE;
     }

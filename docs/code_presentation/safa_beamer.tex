@@ -1235,16 +1235,15 @@ Two endpoints are connected when
 \]
 
 \medskip
-\textbf{2. Apply physical $f_{\rm core}$ cuts to the basin mean}
+\textbf{2. Do not pre-filter basins with artificial $f_{\rm core}$ cuts}
 
-PRD:
+All numerical basins remain eligible for
 \[
-0.1<\langle f_{\rm core}\rangle<0.9
+0\le f_{\rm core}\le1.
 \]
-P and PR:
-\[
-0.1<\langle f_{\rm core}\rangle<0.99
-\]
+Exact endpoint degeneracy and component identifiability are diagnosed only
+\textbf{after polishing}, using the final $f_{\rm core}$ and the MINOS profiles
+of $R_{\rm core}$ and $R_{\rm tail}$.
 \end{column}
 
 \begin{column}{0.50\textwidth}

@@ -193,9 +193,12 @@ bool verify_mixed_endpoint_degeneracies() {
         }
     }
     if (std::string(hbt::fit_failure_reason_token(
-            hbt::FitFailureReason::DegenerateCoreFraction)) !=
-        "degenerate_core_fraction") {
-        return fail("mixed endpoint degeneracy has no stable report token");
+            hbt::FitFailureReason::NonIdentifiableCore)) !=
+            "non_identifiable_core" ||
+        std::string(hbt::fit_failure_reason_token(
+            hbt::FitFailureReason::NonIdentifiableTail)) !=
+            "non_identifiable_tail") {
+        return fail("mixed identifiability failures have no stable report token");
     }
     if (std::string(hbt::fit_estimator_token(hbt::FitEstimator::Poisson)) !=
             "poisson" ||

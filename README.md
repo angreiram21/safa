@@ -963,16 +963,11 @@ Gaussian fit. The 36-start mixed search therefore remains three-dimensional
 despite the free amplitude.
 
 Numerically valid mixed MIGRAD minima are first grouped into numerical basins
-using the final `(log(R_core), log(R_tail), f_core)` coordinates. Each basin is
-represented by the arithmetic mean of `f_core` for physical admissibility. PRD
-requires `0.1 < mean(f_core) < 0.9`, so both Gaussian core and exponential tail
-remain present. P and PR require `0.1 < mean(f_core) < 0.99`, rejecting the
-degenerate near-pure-Gaussian limit while still rejecting exponential-dominated
-basins with `mean(f_core) <= 0.1`. If no basin survives the applicable origin
-policy, the mixed fit is invalidated with `degenerate_core_fraction`.
-
-Among the non-degenerate basins, the basin reached by the largest number of the
-36 deterministic starts is selected. If two basins have the same multiplicity,
+using the final `(log(R_core), log(R_tail), f_core)` coordinates. Basin
+selection applies no artificial acceptance window in `f_core`: values close to
+0 or 1, including the historical 0.1, 0.9 and 0.99 thresholds, do not remove a
+numerical basin. The basin reached by the largest number of the 36 deterministic
+starts is selected. If two basins have the same multiplicity,
 the basin with the smallest objective value wins; a remaining exact tie is
 broken by the lowest start index. Within the selected basin, valid endpoints are ordered by increasing objective
 value. Each endpoint supplies starting coordinates for a fresh final MIGRAD pass
@@ -991,12 +986,25 @@ MINOS profile obtains the asymmetric `A` uncertainty while allowing
 `R_core`, `R_tail`, and `f_core` to vary. No unused fixed-shape A error is
 calculated.
 
+Mixed-component identifiability is diagnosed only after the selected basin is
+polished. An exact `f_core = 0` makes `R_core` non-identifiable and is reported
+as `non_identifiable_core`; an exact `f_core = 1` makes `R_tail`
+non-identifiable and is reported as `non_identifiable_tail`. For
+`0 < f_core < 1`, the value of `f_core` alone never invalidates the fit. Instead,
+`R_core` and `R_tail` must each have a finite two-sided Delta-chi2=1 MINOS
+interval. A missing profile crossing is classified as non-identifiability of the
+corresponding component, while explicit MINOS call-limit or new-minimum states
+retain their numerical failure token. Because `f_core` is physically bounded in
+`[0,1]`, its MINOS interval is allowed to touch either boundary without being a
+fit failure; the corresponding uncertainty endpoint is reported exactly at 0
+or 1.
+
 The one-dimensional radial-mT count-threshold machinery is retained, but its
 current value is `N_selected >= 0`, so no non-empty slice is vetoed by this
 criterion. `N_selected` itself and its histogram-selection definition are
-unchanged. Invalid MIGRAD/MINOS or covariance states, degenerate mixing coefficients,
-missing Gaussian anchors, invalid half-maximum seeds, invalid objectives and
-insufficient regions are preserved explicitly. An invalid fit does not fabricate
+unchanged. Invalid MIGRAD/MINOS or covariance states, non-identifiable mixed
+components, missing Gaussian anchors, invalid half-maximum seeds, invalid
+objectives and insufficient regions are preserved explicitly. An invalid fit does not fabricate
 parameter estimates or fit curves.
 
 ### Signed delta-t statistics
@@ -1457,12 +1465,12 @@ The standard CTest suite contains 51 tests covering:
   documented `p_i == 0` limit;
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus the 36-start Neyman mixed Minuit2 fit that
-  reject basins using the origin-specific physical `f_core` interval: strict
-  `(0.1,0.9)` for PRD and `(0.1,0.99)` for P/PR; select the most populated
-  admissible basin (smallest q then lowest start index for equal multiplicity),
-  select the smallest objective inside that basin, retain basin multiplicity and
-  every start endpoint diagnostically,
-  and validate MIGRAD/covariance/MINOS states and asymmetric physical errors;
+  selects the most populated numerical basin without any artificial `f_core`
+  acceptance window (smallest q then lowest start index for equal multiplicity),
+  retains basin multiplicity and every start endpoint diagnostically, diagnoses
+  exact `f_core` endpoint degeneracy only after polishing, and requires finite
+  two-sided MINOS intervals for `R_core` and `R_tail` while allowing the bounded
+  `f_core` profile itself to touch 0 or 1;
 - post-sample F6-to-F7 analysis without pair re-traversal or raw-count mutation;
 - canonical production-output hierarchy, run-level `product_catalog.csv`
   traceability metadata, fit/statistics CSVs and omission of invalid fit curves;
