@@ -17,7 +17,7 @@
 namespace hbt {
 
 /**
- * @brief Select the OSL/radial region from zero through the right-tail cut.
+ * @brief Select the full configured OSL/radial histogram range.
  * @param bins Slot-major raw histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated uniform binning for the logical histogram.
@@ -25,9 +25,8 @@ namespace hbt {
  * @throws std::out_of_range If the requested logical histogram is absent.
  * @throws std::overflow_error If the selected uint64_t count sum overflows.
  *
- * Leading empty bins are retained. The first empty bin strictly to the right
- * of the right edge of the first contiguous global-maximum plateau is excluded
- * and fixes the tail cut. No later island is reincorporated.
+ * Every configured bin is retained, including empty bins and any occupied
+ * bins after them. No empty-bin tail restriction is imposed.
  */
 [[nodiscard]] std::optional<StatisticalRegion> select_shape_region(
     const std::vector<std::uint64_t>& bins,
@@ -102,7 +101,7 @@ namespace hbt {
 );
 
 /**
- * @brief Select the signed delta-t region around its modal plateau.
+ * @brief Select the full configured signed delta-t histogram range.
  * @param bins Slot-major raw histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param binning Validated signed delta-t binning.
@@ -110,8 +109,8 @@ namespace hbt {
  * @throws std::out_of_range If the requested logical histogram is absent.
  * @throws std::overflow_error If the selected uint64_t count sum overflows.
  *
- * The first empty bin on each side of the modal plateau is excluded and ends
- * that side of the selected region.
+ * Every configured bin is retained, including empty bins and any occupied
+ * bins after them. No empty-bin restriction is imposed on either side.
  */
 [[nodiscard]] std::optional<StatisticalRegion> select_delta_t_region(
     const std::vector<std::uint64_t>& bins,

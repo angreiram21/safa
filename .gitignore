@@ -19,3 +19,13 @@ scripts/plot_paper_figures.py
 # Otuput/Results run
 /output*
 /paper*
+
+docs/code_presentation/safa_beamer.aux
+docs/code_presentation/safa_beamer.log
+docs/code_presentation/safa_beamer.nav
+docs/code_presentation/safa_beamer.out
+docs/code_presentation/safa_beamer.snm
+docs/code_presentation/safa_beamer.synctex.gz
+docs/code_presentation/safa_beamer.toc
+docs/code_presentation/safa_beamer.vrb
+

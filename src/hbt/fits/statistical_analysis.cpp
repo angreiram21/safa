@@ -463,17 +463,7 @@ std::optional<StatisticalRegion> select_shape_region(
         return std::nullopt;
     }
 
-    const auto mode = modal_plateau(bins, offset, binning.nbins);
-    std::size_t last = binning.nbins - 1U;
-    for (std::size_t bin = mode.second + 1U;
-         bin < binning.nbins;
-         ++bin) {
-        if (bins[offset + bin] == 0U) {
-            last = bin - 1U;
-            break;
-        }
-    }
-
+    const std::size_t last = binning.nbins - 1U;
     return StatisticalRegion{0U, last, sum_region(bins, offset, 0U, last)};
 }
 
@@ -745,25 +735,8 @@ std::optional<StatisticalRegion> select_delta_t_region(
         return std::nullopt;
     }
 
-    const auto mode = modal_plateau(bins, offset, binning.nbins);
-    std::size_t first = 0U;
-    std::size_t last = binning.nbins - 1U;
-
-    for (std::size_t bin = mode.first; bin > 0U; --bin) {
-        if (bins[offset + bin - 1U] == 0U) {
-            first = bin;
-            break;
-        }
-    }
-    for (std::size_t bin = mode.second + 1U;
-         bin < binning.nbins;
-         ++bin) {
-        if (bins[offset + bin] == 0U) {
-            last = bin - 1U;
-            break;
-        }
-    }
-
+    const std::size_t first = 0U;
+    const std::size_t last = binning.nbins - 1U;
     return StatisticalRegion{
         first,
         last,

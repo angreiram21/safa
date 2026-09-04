@@ -878,14 +878,13 @@ revisit pairs, recompute kinematics/frames, rebuild routing or serialize files.
 
 ### Statistical regions and normalized distributions
 
-For OSL and radial shape histograms, the selected region starts at bin zero,
-retains leading empty bins, includes the modal peak and stops immediately before
-the first empty bin to the right of that modal plateau. Later disconnected
-islands are excluded. An all-zero histogram has no selected region.
+For OSL and radial shape histograms, every configured histogram bin is retained
+for post-sample analysis. Empty bins do not terminate the region, and occupied
+bins after empty bins are not discarded. An all-zero histogram has no selected
+region.
 
-For signed `delta_t`, the modal plateau is located first and the selected region
-extends to the first empty bin on each side. No minimum-entry threshold or
-silent tail repair is applied.
+For signed `delta_t`, the same unrestricted policy is used: every configured bin
+is retained, independently of empty bins on either side of the distribution.
 
 Presentation distributions are normalized only over the selected region. For a
 uniform bin width `dx`, each selected raw count `n_i` is written as
@@ -904,11 +903,11 @@ OSL exponential:    exp(-x / R_tail)
 radial exponential: r^2 exp(-r / R_tail)
 ```
 
-The full statistical region keeps the historical contiguous-region semantics
-up to the first empty bin after the mode. It is used by both the pure Gaussian
-and the mixed model. No 5%/10% Gaussian-core threshold is applied. Raw counts
-are never smoothed in the likelihood. PAVA is retained only for the independent
-half-maximum radius seed `R_HM`.
+The full statistical region spans the entire configured histogram range. It is
+used by both the pure Gaussian and the mixed model, with no empty-bin tail cut.
+No 5%/10% Gaussian-core threshold is applied. Raw counts are never smoothed in
+the likelihood. PAVA is retained only for the independent half-maximum radius
+seed `R_HM`.
 
 For the mixed model, the Gaussian and exponential components are normalized
 independently to unit probability over the selected region and combined as

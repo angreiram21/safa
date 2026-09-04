@@ -37,8 +37,8 @@ bool close(double actual, double expected) {
 }
 
 /**
- * @brief Verify shape selection keeps leading zeros and cuts later islands.
- * @return true when the exact contiguous-region contract is satisfied.
+ * @brief Verify shape selection retains the full configured histogram range.
+ * @return true when empty bins and later occupied islands are all retained.
  */
 bool verify_shape_region() {
     const hbt::HistogramBinningConfig binning{8U, 0.0, 8.0, 1.0};
@@ -48,9 +48,9 @@ bool verify_shape_region() {
     if (!region.has_value()) {
         return fail("non-empty shape histogram had no selected region");
     }
-    if (region->first_bin != 0U || region->last_bin != 5U ||
-        region->selected_count != 15U) {
-        return fail("shape region did not preserve origin-side empty bins");
+    if (region->first_bin != 0U || region->last_bin != 7U ||
+        region->selected_count != 19U) {
+        return fail("shape region did not retain the full histogram range");
     }
     return true;
 }
@@ -83,7 +83,7 @@ bool verify_radial_gaussian_core_region() {
     };
     const std::optional<hbt::StatisticalRegion> full =
         hbt::select_shape_region(bins, 0U, binning);
-    if (!full.has_value() || full->last_bin != 8U) {
+    if (!full.has_value() || full->last_bin != 9U) {
         return fail("radial core fixture lost its full statistical region");
     }
     const std::optional<hbt::StatisticalRegion> core =
@@ -113,7 +113,7 @@ bool verify_osl_gaussian_core_region() {
     const std::vector<std::uint64_t> bins{9U, 10U, 8U, 6U, 3U, 1U, 2U, 0U};
     const std::optional<hbt::StatisticalRegion> full =
         hbt::select_shape_region(bins, 0U, binning);
-    if (!full.has_value() || full->last_bin != 6U) {
+    if (!full.has_value() || full->last_bin != 7U) {
         return fail("OSL core fixture lost its full statistical region");
     }
     const std::optional<hbt::StatisticalRegion> core =
@@ -549,8 +549,8 @@ bool verify_empty_regions() {
 }
 
 /**
- * @brief Verify signed delta-t selection stops at first empty bin per side.
- * @return true when both delimiters and external islands are excluded.
+ * @brief Verify signed delta-t selection retains the full configured range.
+ * @return true when internal zeros and external occupied islands are retained.
  */
 bool verify_delta_t_region() {
     const hbt::HistogramBinningConfig binning{8U, -4.0, 4.0, 1.0};
@@ -560,9 +560,9 @@ bool verify_delta_t_region() {
     if (!region.has_value()) {
         return fail("non-empty delta-t histogram had no selected region");
     }
-    if (region->first_bin != 2U || region->last_bin != 5U ||
-        region->selected_count != 17U) {
-        return fail("delta-t bilateral empty-bin cut is incorrect");
+    if (region->first_bin != 0U || region->last_bin != 7U ||
+        region->selected_count != 26U) {
+        return fail("delta-t region did not retain the full histogram range");
     }
     return true;
 }
