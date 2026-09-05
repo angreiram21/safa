@@ -965,10 +965,9 @@ despite the free amplitude.
 Numerically valid mixed MIGRAD minima are first grouped into numerical basins
 using the final `(log(R_core), log(R_tail), f_core)` coordinates. Each basin is
 represented by the arithmetic mean of `f_core` for physical admissibility. PRD
-requires `0.1 < mean(f_core) < 0.9`, so both Gaussian core and exponential tail
-remain present. P and PR require `0.1 < mean(f_core) < 0.99`, rejecting the
-degenerate near-pure-Gaussian limit while still rejecting exponential-dominated
-basins with `mean(f_core) <= 0.1`. If no basin survives the applicable origin
+requires `0.1 < mean(f_core) < 0.99`. P and PR use the same strict
+`0.1 < mean(f_core) < 0.99` interval, rejecting the near-pure-Gaussian limit
+while still rejecting exponential-dominated basins with `mean(f_core) <= 0.1`. If no basin survives the applicable origin
 policy, the mixed fit is invalidated with `degenerate_core_fraction`.
 
 Among the non-degenerate basins, the basin reached by the largest number of the
@@ -1457,8 +1456,8 @@ The standard CTest suite contains 51 tests covering:
   documented `p_i == 0` limit;
 - compact-core independent Poisson/Neyman/Pearson Gaussian fitting with moment
   and half-maximum starts, plus the 36-start Neyman mixed Minuit2 fit that
-  reject basins using the origin-specific physical `f_core` interval: strict
-  `(0.1,0.9)` for PRD and `(0.1,0.99)` for P/PR; select the most populated
+  reject basins using the strict physical `f_core` interval `(0.1,0.99)`
+  for PRD, P, and PR; select the most populated
   admissible basin (smallest q then lowest start index for equal multiplicity),
   select the smallest objective inside that basin, retain basin multiplicity and
   every start endpoint diagnostically,
