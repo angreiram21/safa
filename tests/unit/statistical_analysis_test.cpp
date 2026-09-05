@@ -389,14 +389,14 @@ bool verify_degenerate_fraction_basin_filter() {
 
 /**
  * @brief Verify the PRD physical f_core basin bounds remain strict.
- * @return true when PRD basins at 0.1 or 0.99 yield no selectable solution.
+ * @return true when PRD basins at 0.1 or 0.9 yield no selectable solution.
  */
 bool verify_no_nondegenerate_fraction_basin() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
         {std::log(3.0), std::log(4.0), 0.100},
         {std::log(3.01), std::log(4.01), 0.100},
-        {std::log(3.5), std::log(4.5), 0.990},
-        {std::log(3.51), std::log(4.51), 0.990}
+        {std::log(3.5), std::log(4.5), 0.900},
+        {std::log(3.51), std::log(4.51), 0.900}
     };
     const std::vector<double> q_values{10.0, 9.0, 8.0, 7.0};
     const std::vector<std::size_t> valid_indices{0U, 1U, 2U, 3U};
@@ -415,9 +415,9 @@ bool verify_no_nondegenerate_fraction_basin() {
 }
 
 /**
- * @brief Verify the common mixed-fraction bounds reject degeneracies.
- * @return true when PRD, P, and PR reject f_core >= 0.99, admit 0.98, and
- *         keep the lower 0.1 bound exclusive.
+ * @brief Verify origin-specific mixed-fraction bounds reject degeneracies.
+ * @return true when P/PR reject f_core >= 0.99 but admit 0.98, PRD keeps its
+ *         stricter upper bound, and the lower 0.1 bound remains exclusive.
  */
 bool verify_origin_specific_fraction_basin_policy() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
@@ -444,38 +444,36 @@ bool verify_origin_specific_fraction_basin_policy() {
         return fail("origin policy did not reject the pure-Gaussian basin");
     }
 
-    const std::vector<hbt::MixedBasinPoint> below_upper_boundary{
+    const std::vector<hbt::MixedBasinPoint> p_pr_only{
         {std::log(3.0), std::log(4.0), 0.980}
     };
     const std::vector<double> single_q{1.0};
     const std::vector<std::size_t> single_index{0U};
-    for (const auto policy : {
-            hbt::MixedCoreFractionPolicy::RequireCoreAndTail,
-            hbt::MixedCoreFractionPolicy::RejectPureGaussian}) {
-        if (!hbt::select_mixed_start_by_largest_basin(
-                below_upper_boundary,
-                single_q,
-                single_index,
-                policy
-            ).has_value()) {
-            return fail("common upper f_core bound rejected f_core=0.98");
-        }
+    if (hbt::select_mixed_start_by_largest_basin(
+            p_pr_only,
+            single_q,
+            single_index,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+        ).has_value() ||
+        !hbt::select_mixed_start_by_largest_basin(
+            p_pr_only,
+            single_q,
+            single_index,
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian
+        ).has_value()) {
+        return fail("origin-specific upper f_core bounds are incorrect");
     }
 
     const std::vector<hbt::MixedBasinPoint> upper_boundary{
         {std::log(3.0), std::log(4.0), 0.990}
     };
-    for (const auto policy : {
-            hbt::MixedCoreFractionPolicy::RequireCoreAndTail,
-            hbt::MixedCoreFractionPolicy::RejectPureGaussian}) {
-        if (hbt::select_mixed_start_by_largest_basin(
-                upper_boundary,
-                single_q,
-                single_index,
-                policy
-            ).has_value()) {
-            return fail("common policy admitted the exclusive f_core=0.99 boundary");
-        }
+    if (hbt::select_mixed_start_by_largest_basin(
+            upper_boundary,
+            single_q,
+            single_index,
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian
+        ).has_value()) {
+        return fail("P/PR policy admitted the exclusive f_core=0.99 boundary");
     }
 
     const std::vector<hbt::MixedBasinPoint> lower_boundary{
