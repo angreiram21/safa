@@ -211,8 +211,13 @@ bool verify_analysis_and_output() {
         derived.products[0U].origins[0U].global.osl[0U];
     if (!shape.region.has_value() || shape.normalized_bins.size() != 20U ||
         !shape.gaussian.fully_valid || !shape.gaussian_neyman.fully_valid ||
-        !shape.gaussian_pearson.fully_valid || !shape.mixed.fully_valid ||
-        !shape.mixed_neyman.fully_valid || !shape.mixed_pearson.fully_valid ||
+        !shape.gaussian_pearson.fully_valid ||
+        shape.mixed.failure_reason != hbt::FitFailureReason::NotApplicable ||
+        !shape.mixed_neyman.fully_valid ||
+        shape.mixed_pearson.failure_reason !=
+            hbt::FitFailureReason::NotApplicable ||
+        shape.mixed.starts_attempted != 0U ||
+        shape.mixed_pearson.starts_attempted != 0U ||
         shape.gaussian.estimator != hbt::FitEstimator::Poisson ||
         shape.gaussian_neyman.estimator != hbt::FitEstimator::Neyman ||
         shape.gaussian_pearson.estimator != hbt::FitEstimator::Pearson ||

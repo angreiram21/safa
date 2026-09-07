@@ -8,7 +8,7 @@
 
 # Proyect documentations
 /docs/*.pdf
-/docs/**/*.pdf
+# /docs/**/*.pdf
 
 # macOS metadata
 .DS_Store
