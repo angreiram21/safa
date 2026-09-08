@@ -360,8 +360,8 @@ bool verify_largest_mixed_basin_selection() {
  */
 bool verify_degenerate_fraction_basin_filter() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
-        {std::log(10.40), std::log(3.03), 0.055},
-        {std::log(10.44), std::log(3.04), 0.058},
+        {std::log(10.40), std::log(3.03), 0.025},
+        {std::log(10.44), std::log(3.04), 0.028},
         {std::log(2.83), std::log(3.81), 0.326},
         {std::log(2.85), std::log(3.79), 0.329},
         {std::log(3.92), std::log(3.19), 1.0e-9},
@@ -389,12 +389,12 @@ bool verify_degenerate_fraction_basin_filter() {
 
 /**
  * @brief Verify the PRD physical f_core basin bounds remain strict.
- * @return true when PRD basins at 0.1 or 0.99 yield no selectable solution.
+ * @return true when PRD basins at 0.05 or 0.99 yield no selectable solution.
  */
 bool verify_no_nondegenerate_fraction_basin() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
-        {std::log(3.0), std::log(4.0), 0.100},
-        {std::log(3.01), std::log(4.01), 0.100},
+        {std::log(3.0), std::log(4.0), 0.050},
+        {std::log(3.01), std::log(4.01), 0.050},
         {std::log(3.5), std::log(4.5), 0.990},
         {std::log(3.51), std::log(4.51), 0.990}
     };
@@ -417,7 +417,7 @@ bool verify_no_nondegenerate_fraction_basin() {
 /**
  * @brief Verify the origin-specific mixed-fraction upper bounds.
  * @return true when PRD rejects f_core >= 0.99, P/PR admit 0.99 but reject
- *         f_core >= 0.995, and the lower 0.1 bound remains exclusive.
+ *         f_core >= 0.995, and the lower 0.05 bound remains exclusive.
  */
 bool verify_origin_specific_fraction_basin_policy() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
@@ -497,7 +497,7 @@ bool verify_origin_specific_fraction_basin_policy() {
     }
 
     const std::vector<hbt::MixedBasinPoint> lower_boundary{
-        {std::log(3.0), std::log(4.0), 0.100}
+        {std::log(3.0), std::log(4.0), 0.050}
     };
     if (hbt::select_mixed_start_by_largest_basin(
             lower_boundary,
@@ -512,7 +512,27 @@ bool verify_origin_specific_fraction_basin_policy() {
             hbt::MixedCoreFractionPolicy::RejectPureGaussian
         ).has_value()) {
         return fail(
-            "origin-specific policy admitted the exclusive f_core=0.1 boundary"
+            "origin-specific policy admitted the exclusive f_core=0.05 boundary"
+        );
+    }
+
+    const std::vector<hbt::MixedBasinPoint> newly_admissible_low_fraction{
+        {std::log(3.0), std::log(4.0), 0.068}
+    };
+    if (!hbt::select_mixed_start_by_largest_basin(
+            newly_admissible_low_fraction,
+            single_q,
+            single_index,
+            hbt::MixedCoreFractionPolicy::RequireCoreAndTail
+        ).has_value() ||
+        !hbt::select_mixed_start_by_largest_basin(
+            newly_admissible_low_fraction,
+            single_q,
+            single_index,
+            hbt::MixedCoreFractionPolicy::RejectPureGaussian
+        ).has_value()) {
+        return fail(
+            "origin-specific policy did not admit f_core=0.068 above the new lower bound"
         );
     }
     return true;

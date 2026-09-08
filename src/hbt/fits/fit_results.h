@@ -43,8 +43,8 @@ enum class FitEstimator {
  * near-pure-Gaussian limit.
  */
 enum class MixedCoreFractionPolicy {
-    RequireCoreAndTail,  ///< PRD: require 0.1 < mean(f_core) < 0.99.
-    RejectPureGaussian   ///< P/PR: require 0.1 < mean(f_core) < 0.995.
+    RequireCoreAndTail,  ///< PRD: require 0.05 < mean(f_core) < 0.99.
+    RejectPureGaussian   ///< P/PR: require 0.05 < mean(f_core) < 0.995.
 };
 
 /**
@@ -179,7 +179,7 @@ constexpr double kMixedBasinLogRadiusTolerance = 0.01;
 constexpr double kMixedBasinCoreFractionTolerance = 0.01;
 
 /** Lower exclusive f_core bound for a physically non-degenerate mixed basin. */
-constexpr double kMixedPhysicalCoreFractionMin = 0.1;
+constexpr double kMixedPhysicalCoreFractionMin = 0.05;
 
 /** PRD-only upper exclusive f_core bound for a non-degenerate mixed basin. */
 constexpr double kMixedPhysicalCoreFractionMax = 0.99;
@@ -236,7 +236,7 @@ constexpr double kMixedPPrCoreFractionMax = 0.995;
  *
  * Valid endpoints are partitioned into connected numerical basins using
  * same_mixed_basin(). Basin admissibility is determined from the arithmetic
- * mean f_core: PRD requires 0.1 < mean(f_core) < 0.99, while P/PR require 0.1 < mean(f_core) < 0.995. Among
+ * mean f_core: PRD requires 0.05 < mean(f_core) < 0.99, while P/PR require 0.05 < mean(f_core) < 0.995. Among
  * admissible basins, the largest connected
  * component wins; equal-size basins are ranked by their smallest q and then by
  * their lowest start index. Only after that basin is fixed are its member
