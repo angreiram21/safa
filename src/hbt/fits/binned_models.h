@@ -113,24 +113,25 @@ namespace hbt {
 );
 
 /**
- * @brief Return exact-bin integrals for the unnormalized mixed shape.
+ * @brief Return exact-bin probabilities for the physically normalized mixed shape.
  * @param family OSL or radial physical model family.
  * @param binning Validated uniform histogram binning starting at zero.
  * @param region Selected contiguous statistical region.
  * @param core_radius Strictly positive finite Gaussian core radius.
  * @param tail_radius Strictly positive finite exponential tail radius.
- * @param core_fraction Gaussian mixing coefficient f in [0,1].
- * @return One non-negative mixed bin integral p_i per selected bin.
+ * @param core_fraction Gaussian core probability weight f in [0,1].
+ * @return One non-negative mixed bin probability p_i per selected bin.
  * @throws std::invalid_argument If model evaluation is invalid.
  * @throws std::out_of_range If the region exceeds configured binning.
  *
  * The returned values use
  *
- *   p_i = f * I_G,i(R_core) + (1-f) * I_E,i(R_tail),
+ *   p_i = f * P_G,i(R_core) + (1-f) * P_E,i(R_tail),
  *
- * with exact analytic bin-edge component integrals. Neither component is
- * normalized to unit probability before mixing. A representable zero caused
- * by far-tail underflow is valid and is preserved as p_i == 0.
+ * where P_G,i and P_E,i are exact analytic bin-edge integrals divided by
+ * each component's analytic normalization over the full physical domain
+ * r >= 0. The normalization is independent of the configured histogram
+ * range. A representable zero caused by far-tail underflow is valid.
  */
 [[nodiscard]] std::vector<double> mixed_bin_integrals(
     FitObservableFamily family,
@@ -167,7 +168,7 @@ namespace hbt {
 );
 
 /**
- * @brief Evaluate Neyman chi-square for unnormalized mixed bin integrals.
+ * @brief Evaluate Neyman chi-square for mixed bin probabilities.
  * @param bins Slot-major raw histogram count storage.
  * @param offset First raw counter belonging to the logical histogram.
  * @param region Selected statistical region.

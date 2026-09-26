@@ -92,7 +92,7 @@ bool verify_distinct_exponential_forms() {
 }
 
 /**
- * @brief Verify normalized Gaussian and unnormalized mixed exact-bin models.
+ * @brief Verify region-normalized Gaussian and physically normalized mixed models.
  * @return true when each API retains its documented normalization semantics.
  */
 bool verify_exact_bin_model_semantics() {
@@ -125,15 +125,16 @@ bool verify_exact_bin_model_semantics() {
     }
     const double lower = 0.5;
     const double upper = 1.0;
+    const double pi = std::acos(-1.0);
     const double expected =
         f * hbt::gaussian_component_integral(
             hbt::FitObservableFamily::Radial, lower, upper, core_radius
-        ) +
+        ) / (2.0 * std::sqrt(pi) * core_radius * core_radius * core_radius) +
         (1.0 - f) * hbt::exponential_component_integral(
             hbt::FitObservableFamily::Radial, lower, upper, tail_radius
-        );
+        ) / (2.0 * tail_radius * tail_radius * tail_radius);
     if (!close(mixed.front(), expected)) {
-        return fail("mixed model normalized components instead of mixing integrals");
+        return fail("mixed model did not normalize components before mixing");
     }
     return true;
 }
@@ -155,7 +156,7 @@ bool verify_mixed_endpoint_degeneracies() {
             static_cast<double>(bin),
             static_cast<double>(bin + 1U),
             core_radius
-        ));
+        ) / (core_radius * std::sqrt(std::acos(-1.0))));
     }
     const std::vector<double> endpoint_core = hbt::mixed_bin_integrals(
         hbt::FitObservableFamily::OSL,
@@ -183,7 +184,7 @@ bool verify_mixed_endpoint_degeneracies() {
             static_cast<double>(bin + 1U),
             tail_radius
         );
-        pure_tail.push_back(integral);
+        pure_tail.push_back(integral / tail_radius);
     }
 
     for (std::size_t bin = 0U; bin < 5U; ++bin) {

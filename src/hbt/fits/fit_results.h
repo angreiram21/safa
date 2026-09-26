@@ -291,7 +291,7 @@ constexpr double kMixedPPrCoreFractionMax = 0.995;
  * @param reject_limits Whether parameter-limit crossings invalidate the fit.
  * @return FitFailureReason::None when both required sides are valid.
  *
- * Limit rejection is enabled for the bounded Gaussian mixing coefficient and disabled for
+ * Limit rejection is enabled for the bounded Gaussian core probability weight and disabled for
  * log-radius parameters, which have no physical bounds.
  */
 [[nodiscard]] FitFailureReason fit_failure_from_minos(
@@ -300,8 +300,8 @@ constexpr double kMixedPPrCoreFractionMax = 0.995;
 );
 
 /**
- * @brief Classify the physical validity of a fitted mixed Gaussian mixing coefficient.
- * @param core_fraction Fitted physical mixing coefficient.
+ * @brief Classify the physical validity of a fitted mixed Gaussian core probability weight.
+ * @param core_fraction Fitted physical Gaussian core probability weight.
  * @return None for 0 < f_core < 1, DegenerateCoreFraction at either exact
  *         endpoint, or NonFiniteMinimum for a non-finite/out-of-domain value.
  */
@@ -402,7 +402,7 @@ struct MixedFitResult {
     std::optional<FitParameterEstimate> core_radius;
     /// Physical tail radius and asymmetric MINOS errors when fully valid.
     std::optional<FitParameterEstimate> tail_radius;
-    /// Physical Gaussian mixing coefficient and asymmetric MINOS errors.
+    /// Physical Gaussian core probability weight and asymmetric MINOS errors.
     std::optional<FitParameterEstimate> core_fraction;
     /// Positive mixed amplitude A with asymmetric profile errors.
     std::optional<FitParameterEstimate> amplitude;

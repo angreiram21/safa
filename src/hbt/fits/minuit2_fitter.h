@@ -61,18 +61,18 @@ namespace hbt {
  * @param gaussian_result Valid full-range free-amplitude Gaussian result from the same estimator;
  *        its fitted radius provides the R_G member of the core-seed set.
  * @param half_maximum_seed Gaussian R seed converted from histogram FWHM.
- * @param core_fraction_policy Origin-dependent physical mixing-coefficient basin policy.
+ * @param core_fraction_policy Origin-dependent physical core-probability-weight basin policy.
  * @return Complete 36-start fit result, analytic amplitude, terminal start
  *         endpoints, and explicit diagnostics.
  * @throws std::out_of_range If the selected raw slot is unavailable.
  *
  * The mixed exact-bin shape is
  *
- *   p_i = f_core I_G,i(R_core) + (1-f_core) I_E,i(R_tail),
+ *   p_i = f_core P_G,i(R_core) + (1-f_core) P_E,i(R_tail),
  *   mu_i = N_selected A p_i.
  *
- * I_G,i and I_E,i are not normalized independently. f_core is therefore the
- * bounded Gaussian mixing coefficient, not an integrated probability. For
+ * P_G,i and P_E,i are independently normalized over the full physical
+ * domain r >= 0. f_core is therefore the Gaussian core probability weight. For
  * every MIGRAD tuple (R_core,R_tail,f_core), A is recalculated analytically at
  * the Neyman minimum; the production search remains three-dimensional. A
  * separate final explicit-A MINOS profile supplies the asymmetric uncertainty

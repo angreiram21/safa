@@ -853,7 +853,7 @@ std::vector<double> mixed_bin_integrals(
     if (!std::isfinite(core_fraction) || core_fraction < 0.0 ||
         core_fraction > 1.0) {
         throw std::invalid_argument(
-            "HBT analysis model: Gaussian mixing coefficient is outside [0,1]"
+            "HBT analysis model: Gaussian core probability weight is outside [0,1]"
         );
     }
 
@@ -862,6 +862,24 @@ std::vector<double> mixed_bin_integrals(
         !std::isfinite(tail_radius) || tail_radius <= 0.0) {
         throw std::invalid_argument(
             "HBT analysis model: invalid mixed-model radius"
+        );
+    }
+
+    const double pi = std::acos(-1.0);
+    const double gaussian_normalization =
+        family == FitObservableFamily::OSL
+            ? core_radius * std::sqrt(pi)
+            : 2.0 * std::sqrt(pi) * core_radius * core_radius * core_radius;
+    const double exponential_normalization =
+        family == FitObservableFamily::OSL
+            ? tail_radius
+            : 2.0 * tail_radius * tail_radius * tail_radius;
+    if (!std::isfinite(gaussian_normalization) ||
+        !(gaussian_normalization > 0.0) ||
+        !std::isfinite(exponential_normalization) ||
+        !(exponential_normalization > 0.0)) {
+        throw std::invalid_argument(
+            "HBT analysis model: invalid mixed-model normalization"
         );
     }
 
@@ -878,8 +896,13 @@ std::vector<double> mixed_bin_integrals(
         const double exponential = component_integral_allow_zero(
             family, lower, upper, tail_radius, false
         );
-        const double integral = core_fraction * gaussian +
-            (1.0 - core_fraction) * exponential;
+
+
+        const double gaussian_probability = gaussian / gaussian_normalization;
+        const double exponential_probability =
+            exponential / exponential_normalization;
+        const double integral = core_fraction * gaussian_probability +
+            (1.0 - core_fraction) * exponential_probability;
         if (!std::isfinite(integral) || integral < 0.0) {
             throw std::invalid_argument(
                 "HBT analysis model: invalid mixed-model bin integral"
@@ -893,7 +916,7 @@ std::vector<double> mixed_bin_integrals(
 namespace {
 
 /**
- * @brief Validate unnormalized mixed-integral Neyman inputs.
+ * @brief Validate mixed-probability Neyman inputs.
  * @return Number of selected bins after count and model checks.
  */
 std::size_t validate_mixed_neyman_inputs(

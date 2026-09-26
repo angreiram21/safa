@@ -308,7 +308,7 @@ private:
  * @brief Three-parameter Neyman objective for the mixed shape.
  *
  * Parameter order is log(R_core), log(R_tail), f_core. For every tuple the
- * exact unnormalized mixed bin integrals p_i are evaluated and the positive
+ * exact physically normalized mixed bin probabilities p_i are evaluated and the positive
  * amplitude A is recalculated analytically at the Neyman minimum before the
  * objective is returned. Borrowed references are retained only during one
  * synchronous fit invocation.
@@ -640,7 +640,7 @@ struct GaussianStartOutcome {
  * @param objective Borrowed synchronous Minuit objective.
  * @param core_seed Strictly positive Gaussian core radius seed.
  * @param tail_seed Strictly positive exponential tail radius seed.
- * @param core_fraction_seed Initial Gaussian mixing coefficient in (0,1).
+ * @param core_fraction_seed Initial Gaussian core probability weight in (0,1).
  * @return FunctionMinimum plus its stable diagnostic.
  *
  * Numerical parameter steps are Minuit controls, not scientific configuration.
@@ -672,7 +672,7 @@ std::pair<FunctionMinimum, MigradDiagnostic> run_mixed_migrad(
  * @param objective Explicit-amplitude Neyman objective.
  * @param core_radius Final positive R_core from the 3D profiled search.
  * @param tail_radius Final positive R_tail from the 3D profiled search.
- * @param core_fraction Final mixing coefficient in (0,1).
+ * @param core_fraction Final Gaussian core probability weight in (0,1).
  * @param amplitude Analytic positive A at the same 3D minimum.
  * @return Fresh 4D MIGRAD minimum plus stable diagnostics.
  *
