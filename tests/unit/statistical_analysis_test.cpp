@@ -389,12 +389,12 @@ bool verify_degenerate_fraction_basin_filter() {
 
 /**
  * @brief Verify the PRD physical f_core basin bounds remain strict.
- * @return true when PRD basins at 0.05 or 0.99 yield no selectable solution.
+ * @return true when PRD basins at 0.10 or 0.99 yield no selectable solution.
  */
 bool verify_no_nondegenerate_fraction_basin() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
-        {std::log(3.0), std::log(4.0), 0.050},
-        {std::log(3.01), std::log(4.01), 0.050},
+        {std::log(3.0), std::log(4.0), 0.100},
+        {std::log(3.01), std::log(4.01), 0.100},
         {std::log(3.5), std::log(4.5), 0.990},
         {std::log(3.51), std::log(4.51), 0.990}
     };
@@ -417,7 +417,7 @@ bool verify_no_nondegenerate_fraction_basin() {
 /**
  * @brief Verify the origin-specific mixed-fraction upper bounds.
  * @return true when PRD rejects f_core >= 0.99, P/PR admit 0.99 but reject
- *         f_core >= 0.995, and the lower 0.05 bound remains exclusive.
+ *         f_core >= 0.995, and the lower 0.10 bound remains exclusive.
  */
 bool verify_origin_specific_fraction_basin_policy() {
     const std::vector<hbt::MixedBasinPoint> endpoints{
@@ -497,7 +497,7 @@ bool verify_origin_specific_fraction_basin_policy() {
     }
 
     const std::vector<hbt::MixedBasinPoint> lower_boundary{
-        {std::log(3.0), std::log(4.0), 0.050}
+        {std::log(3.0), std::log(4.0), 0.100}
     };
     if (hbt::select_mixed_start_by_largest_basin(
             lower_boundary,
@@ -512,12 +512,12 @@ bool verify_origin_specific_fraction_basin_policy() {
             hbt::MixedCoreFractionPolicy::RejectPureGaussian
         ).has_value()) {
         return fail(
-            "origin-specific policy admitted the exclusive f_core=0.05 boundary"
+            "origin-specific policy admitted the exclusive f_core=0.10 boundary"
         );
     }
 
     const std::vector<hbt::MixedBasinPoint> newly_admissible_low_fraction{
-        {std::log(3.0), std::log(4.0), 0.068}
+        {std::log(3.0), std::log(4.0), 0.120}
     };
     if (!hbt::select_mixed_start_by_largest_basin(
             newly_admissible_low_fraction,
@@ -532,7 +532,7 @@ bool verify_origin_specific_fraction_basin_policy() {
             hbt::MixedCoreFractionPolicy::RejectPureGaussian
         ).has_value()) {
         return fail(
-            "origin-specific policy did not admit f_core=0.068 above the new lower bound"
+            "origin-specific policy did not admit f_core=0.12 above the new lower bound"
         );
     }
     return true;

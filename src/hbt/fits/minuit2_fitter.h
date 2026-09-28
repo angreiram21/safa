@@ -82,8 +82,8 @@ namespace hbt {
  * R_core={R_G,0.5R_HM,R_HM,2R_HM},
  * R_tail={0.5,1,2}R_tail,mom, and f_core={0.25,0.50,0.75}. Valid minima are
  * grouped into numerical basins. Basin fractions are filtered by the supplied
- * origin policy: PRD requires 0.05 < mean(f_core) < 0.99, while P/PR
- * require 0.05 < mean(f_core) < 0.995 to reject the near-pure-Gaussian
+ * origin policy: PRD requires 0.10 < mean(f_core) < 0.99, while P/PR
+ * require 0.10 < mean(f_core) < 0.995 to reject the near-pure-Gaussian
  * degeneracy. Among
  * the remaining basins, every origin selects the basin reached by the largest
  * number of converged deterministic starts. Equal-size basins are ranked by
